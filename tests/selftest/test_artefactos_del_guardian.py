@@ -105,9 +105,21 @@ class TestLaNormaProtegeElDocumentoYNoElArbol(unittest.TestCase):
     def setUp(self):
         self.pol = Policy.default()
 
-    def test_el_documento_de_norma_esta_protegido_a_cualquier_profundidad(self):
-        self.assertTrue(self.pol.is_protected(RUTA_BASE))
-        self.assertTrue(self.pol.is_protected(f"repo-hijo/{RUTA_BASE}"))
+    def test_el_documento_de_norma_esta_protegido_en_cada_raiz_de_autoridad(self):
+        """Ya NO por `protected_paths`: lo cubre `authority_paths`, que es otro mecanismo.
+
+        Esta prueba cambió el 2026-10-03 con el mecanismo, y el cambio es el hallazgo: pedirle a
+        `is_protected` que cubra el documento de norma era pedirle que globeara `policies/` por
+        todo el árbol, que es el defecto. Ahora se pregunta a quién corresponde.
+        """
+        self.assertFalse(self.pol.is_protected(RUTA_BASE),
+                         "sigue en `protected_paths`: volvería el sobre-bloqueo por nombre")
+        patron, raiz = self.pol.is_authority(RUTA_BASE, ("",))
+        self.assertTrue(patron, "el documento de norma no es artefacto de autoridad")
+        self.assertEqual("", raiz)
+        patron_h, raiz_h = self.pol.is_authority(f"repo-hijo/{RUTA_BASE}", ("", "repo-hijo"))
+        self.assertTrue(patron_h, "el documento de norma de un hijo gobernado quedó libre")
+        self.assertEqual("repo-hijo", raiz_h)
 
     def test_el_codigo_del_producto_bajo_policies_NO_esta_protegido(self):
         """El sobre-bloqueo medido: reglas del producto en un directorio `policies/`."""

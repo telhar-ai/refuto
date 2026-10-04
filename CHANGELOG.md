@@ -10,6 +10,75 @@ histórica no las conservó, se dice.
 
 ---
 
+## 0.7.2 — *sin publicar* · el gobierno se protege por autoridad, no por nombre de directorio
+
+Medido el **2026-10-03** en macOS 25.4 / Python 3.14.6, sobre **11 espacios gobernados** y
+**40.327 ficheros reales**. ADR-0021.
+
+**El defecto que obliga a un mecanismo nuevo y no sólo a corregir datos.** `protected_paths`
+tiene un solo vocabulario —un glob sobre la ruta relativa al espacio— y por ahí se forzaban dos
+semánticas distintas: «este artefacto esté donde esté» (`.harness/`, nombres reservados) y «el
+artefacto de gobierno de un espacio, en SU raíz» (`policies/`, palabra común que el producto
+también usa). Con un solo vocabulario había que elegir entre dos errores, y los dos se midieron:
+
+```
+**/policies/**   61 directorios `policies/` clasificables en un espacio real: 46 de código y
+                 15 de gobierno. ~75 % de error, e irretirable desde el espacio.
+policies/**      sólo la raíz: el documento de norma de cada repositorio hijo, reescribible.
+```
+
+**`authority_paths`.** Campo nuevo cuyos patrones se comparan contra la ruta relativa a cada
+**raíz de autoridad** que contenga al objetivo —un directorio con `.harness/`, y la raíz del
+espacio siempre—. De fábrica, `("policies/**",)`:
+
+```
+policies/reglas.rego                      deny   raíz del espacio: es gobierno
+repo-hijo/policies/base.json              deny   raíz de autoridad «repo-hijo»
+ai/…/src/kernel/mk/policies/x.rs          allow  ninguna raíz lo ancla: es código
+domain/governance/policies/x.yaml         allow  ídem
+```
+
+Sobre los 40.327 ficheros: **cero** denegados por una regla `policies`. Se evalúa en TODAS las
+raíces que contienen al objetivo y no en la más cercana, para que plantar un `.harness/` más
+profundo no pueda desproteger nada: la evasión pasa de improbable a **inexpresable**. Monotonía
+`ACUMULA`, así que un cliente declara su gobierno (`gobierno/**`) y sus proyectos no lo retiran.
+El informe de turno cero lo declara **aparte** de `protected_paths` y diciendo contra qué se
+compara: listarlos juntos haría que el agente se autocensurara sobre su propio código.
+
+**Seguridad · A05 fallaba abierto con el almacén de confianza ausente.** Encontrado al ejercer el
+ciclo de cambio protegido como vía legítima de administración, que es lo que hay que hacer antes
+de declarar algo bloqueado. `core/change.py::apply` decía `if trusted:`, así que un almacén
+ausente o vacío saltaba A05 entero. Medido de punta a punta por el protocolo:
+
+```
+propone  «agente»             ->  propuesta creada
+autoriza «revisor-humano»     ->  token EMITIDO (identidad inventada, par de claves propio)
+aplica   gates/g_colado.py    ->  *** APLICADO ***
+```
+
+Lo mismo con `verification/**` y `evidence/**`: un agente escribiendo **su propio juez y su
+propia evidencia** con sólo inventarse un segundo nombre. A02 verificaba la firma y por eso no se
+notaba —verifica contra la clave pública que el token TRAE—, y sólo `.harness/policy.json` se
+salvaba, por A03. Un almacén vacío es un ámbito vacío, y aquí un ámbito vacío no aprueba. Las 15
+pruebas de `TestChangeGovernanceA01A15` escribían el almacén en `setUp`: cubrían A05 en el caso
+«hay almacén» y ninguno del caso «no hay», que es el estado de los 11 espacios medidos.
+
+**Riesgo residual declarado, no cerrado.** Quien pueda escribir
+`.harness/trusted_authorizers.json` puede autoinscribirse. Es la misma frontera de confianza que
+la política, y no se puede estrechar desde dentro del espacio.
+
+**Hallazgo con cifra que NO se cambia aquí.** `policies/` no era especial: `insumos` (112
+ficheros reales denegados), `verificacion` (146), `evidencia` (80), `evidence` (75) siguen
+globeadas con `**/` y una parte es código del producto —un componente Angular llamado `insumos/`
+no es el directorio de insumos de un espacio gobernado—. El mecanismo para arreglarlo ya existe y
+sería un cambio de datos, pero aquí equivocarse de menos desprotege la EVIDENCIA, y eso exige que
+el dueño de cada espacio clasifique. Queda medido, no tocado.
+
+Suite: **1439/1439** (`python3 refuto.py selftest`, 529 s), frente a 1407/1407 antes del cambio.
+`scripts/preflight.py`: **15 controles PASS**.
+
+---
+
 ## 0.7.1 — *sin publicar* · la norma protegía un árbol entero para cubrir un fichero, y dejaba escribible el gancho que vigila
 
 Medido el **2026-10-03** en macOS 25.4 (Python 3.14.6), con el guardián real y la política de

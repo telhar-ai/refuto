@@ -782,6 +782,20 @@ def build_brief(workspace: Path, *, runtime: str, role_id: str = "",
         L.append(f"- `{pattern}`")
     L += ["", "Resuelve la ruta antes de compararla, así que `..` y los enlaces simbólicos no "
               "la sortean.", ""]
+    # `authority_paths` se declara APARTE y diciendo contra qué se compara. Listarlo junto a
+    # `protected_paths` sería la mentira más fácil de cometer aquí: el lector asumiría que
+    # `policies/**` cubre cualquier `policies/` del árbol —que es justo lo que dejó de hacer, y
+    # el motivo de que exista el campo— y se autocensuraría sobre su propio código fuente.
+    # El mismo recorte silencioso que se quitó arriba, en otra forma.
+    if policy.authority_paths:
+        L += ["Y estos son artefactos de **gobierno**. Se comparan contra la ruta relativa a "
+              "cada **raíz de autoridad** que los contenga —un directorio con `.harness/` "
+              "dentro, y la raíz del espacio siempre—, **no** contra cualquier sitio del árbol:",
+              ""]
+        L += [f"- `{p}`" for p in policy.authority_paths]
+        L += ["", "Es decir: el documento de norma en la raíz de un espacio no se toca, y tu "
+                  "código fuente en un directorio que se llame igual **sí** se escribe. Si una "
+                  "ruta te sale rechazada por aquí, el motivo dice en qué raíz se ancló.", ""]
     if policy.writable_paths:
         L += ["Con estas excepciones, que **sí** puedes escribir aunque caigan dentro de lo "
               "anterior:", ""]

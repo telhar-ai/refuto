@@ -36,6 +36,13 @@
       },
       "description": "ACUMULA por herencia: el efectivo es la UNIÓN con el padre. No hay sintaxis para retirar una ruta heredada, y no poder expresar la violación es más fuerte que detectarla."
     },
+    "authority_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Artefactos de GOBIERNO. Se comparan contra la ruta relativa a cada RAÍZ DE AUTORIDAD que contenga al objetivo —un directorio con `.harness/` dentro, y la raíz del espacio siempre— y no contra la ruta relativa al espacio. Es lo que distingue `policies/base.json` de un espacio (gobierno) de `src/kernel/mk/policies/x.rs` (código fuente que sólo comparte el nombre del directorio). Se evalúa en TODAS las raíces que contienen al objetivo, no en la más cercana: así plantar un `.harness/` más profundo no puede desproteger nada. ACUMULA por herencia."
+    },
     "writable_paths": {
       "type": "array",
       "items": {

@@ -127,6 +127,11 @@ ORDEN_MODOS = ("ask", "default", "acceptEdits", "bypassPermissions")
 REGLAS = {
     # Lo que protege. Más siempre se puede; menos, nunca.
     "protected_paths": ACUMULA,
+    # Protege por el mismo criterio —más se puede, menos no— aunque el mecanismo sea otro: se
+    # ancla a cada raíz de autoridad en vez de a la raíz del espacio. Que acumule es lo que hace
+    # que un cliente pueda declarar SUS artefactos de gobierno (`gobierno/**`, `normas/**`) y
+    # que sus proyectos no puedan retirárselos.
+    "authority_paths": ACUMULA,
     "secret_read_deny": ACUMULA,
     # Los nombres de variable con forma de credencial acumulan por el mismo motivo que las
     # rutas: marcar de más cuesta una consulta a una persona, y marcar de menos cuesta el
