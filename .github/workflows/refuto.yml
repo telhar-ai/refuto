@@ -1,0 +1,368 @@
+# Tubería de refuto. Falla ante cualquier condición crítica.
+#
+# Regla de este archivo: **ningún paso se permite fallar en silencio**. Donde un código de salida
+# distinto de cero es el resultado esperado —la sonda sale con 1 en un runner sin agentes— se
+# captura explícitamente y se juzga con un guion, en vez de taparlo con `|| true`.
+#
+# Los códigos de salida de refuto se respetan tal cual:
+#   0  integrable   1  puertas en rojo o no ejecutables   2  puertas bloqueadas   64  error de uso
+# El código 2 NO se trata como éxito. «No se pudo comprobar» no es «está bien».
+#
+# ESTADO, medido en la primera corrida real (2026-09-23, run 35803449286):
+#
+#   contrato (3.10)   PASS   ← nunca se había ejecutado; el comentario de abajo lo daba por NOT_RUN
+#   contrato (3.13)   PASS
+#   espacio           rc=2   7 puertas BLOCKED en un ejecutor sin agentes
+#   agentes           PASS   tras corregir la captura del código de salida (ver abajo)
+#
+# Qué se hizo con ese rc=2, y qué NO
+# ----------------------------------
+# NO se convirtió en verde. Se atacaron sus causas una por una:
+#
+#   G-SECURITY   decía «herramientas: ninguna». Causa ELIMINADA: se instalan gitleaks, syft y
+#                trivy con versión anclada y checksum verificado. Ahora la puerta se ejecuta
+#                de verdad y su veredicto es información, no ausencia de información.
+#   las otras 6  dependen de que haya agentes instalados, requisitos declarados o decisiones
+#                humanas, y un ejecutor no puede tener ninguna de las tres. Se DECLARAN una a
+#                una con su motivo en `scripts/gate_summary.py::BLOQUEO_ESPERADO`.
+#
+# El trabajo «espacio» ya no afirma «este espacio es integrable» —no lo es, y el veredicto
+# completo se sigue imprimiendo—. Afirma algo más estrecho y comprobable: **no apareció
+# ningún rojo ni ningún bloqueo que no estuviera declarado**. Si aparece uno nuevo, falla.
+#
+# La diferencia no es cosmética. Un rojo permanente se deja de leer, y entonces el día que
+# haya un rojo de verdad nadie lo mira.
+#
+# El nombre del archivo (`refuto.yml`) lo exige `scripts/check_wiring.py`; renombrarlo a
+# `refuto.yml` obliga a cambiar también esa ruta allí.
+name: refuto
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refuto-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contrato:
+    name: Contrato, unidad, auto-prueba y adversariales
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Se prueba el mínimo declarado y el actual. Si refuto deja de correr en 3.10, deja de
+        # poder diagnosticar la mitad de las máquinas donde hace falta. Nota honesta: 3.10 no se
+        # ha ejecutado nunca, ni aquí ni en local (NOT_RUN); este trabajo es lo que lo cerraría.
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with: { python-version: "${{ matrix.python }}" }
+
+      - name: Sin dependencias de terceros
+        # refuto declara correr sólo con biblioteca estándar. Aquí se comprueba, en vez de
+        # confiar: un `import` de tercero se cuela en cualquier revisión distraída.
+        run: python3 scripts/check_stdlib_only.py
+
+      - name: Compilación de todo el árbol
+        run: python3 -m compileall -q core adapters gates tests refuto.py
+
+      - name: Esquemas dentro del subconjunto soportado
+        run: python3 scripts/check_schemas.py
+
+      - name: Las citas a código apuntan a lo que dicen
+        # Un número de línea envejece en silencio: el fichero crece por encima y la cita se
+        # queda señalando otra cosa, o nada. Medido el 2026-09-23 en este repositorio: de 16
+        # citas, 16 resolvían y 6 mentían — tres apuntaban a una línea en blanco.
+        run: python3 scripts/check_citas.py
+
+      - name: Las mediciones del README siguen dando eso
+        # Las cifras ESTRUCTURALES ya las vigila `check_wiring`; las de CORRIDA no tenían
+        # vigilante, y son las que el README cita como E3/E4. Medido el 2026-09-25: la tabla
+        # declaraba 685 pruebas y 13 controles con fecha de ese mismo día, cuando eran 748 y
+        # 14 — cinco commits habían pasado por encima del commit que las puso al día.
+        run: python3 scripts/check_mediciones.py
+
+      - name: Aseguramiento de diagramas de arquitectura
+        run: |
+          python3 scripts/generate_architecture_diagrams.py
+          python3 scripts/check_diagram_assurance.py
+
+      - name: Sonda de mutación del juez
+        run: python3 scripts/mutate_probe.py
+
+      - name: Batería completa de mutation testing
+        run: python3 scripts/run_mutation_testing.py
+
+      - name: Caracterización de rendimiento y complejidad O(1)
+        run: python3 scripts/benchmark_comprehensive.py
+
+      - name: Todo componente conectado, no sólo escrito
+        # Un módulo que existe y que nadie invoca es peor que no tenerlo: aparece en el
+        # inventario, se cita en las revisiones, y no hace nada.
+        run: python3 scripts/check_wiring.py
+
+      - name: El declarador de discontinuidades se niega a declarar lo que no es una carrera
+        # Se ejecuta EN SECO sobre el propio repositorio, cuyo diario está íntegro: la salida
+        # tiene que ser «nada que declarar». Si algún día este guion empezara a proponer
+        # discontinuidades sobre una cadena que cierra, el fallo sería silencioso y peligroso —
+        # es una herramienta que escribe en `evidence/`, que es ruta protegida.
+        run: |
+          set -euo pipefail
+          salida=$(python3 scripts/declarar_discontinuidades.py . )
+          echo "$salida"
+          echo "$salida" | grep -q "nada que declarar"
+          test ! -e .harness/evidence/discontinuities/declared.json
+
+      - name: E2E del ancla certificada, con el estado que salga
+        # El guion mide contra un clúster REAL de concordia (`hicon`, Rust, otro repositorio).
+        # Aquí ese binario no está, así que declara `NOT_EXECUTABLE` y sale con 2. Eso NO es un
+        # aprobado y no se convierte en uno: el paso publica el estado y sigue, porque la
+        # alternativa —no ejecutarlo— es la que `check_wiring` denunciaba con razón hasta el
+        # 2026-09-28 («una comprobación que nadie corre no comprueba nada»).
+        #
+        # Si algún día este runner tiene `HICON_BIN`, un E2E en FAIL sale con 1 y ROMPE el
+        # trabajo: sólo `NOT_EXECUTABLE` (código 2) se tolera, y se tolera diciéndolo.
+        run: |
+          set +e
+          python3 scripts/e2e_ancla_concordia.py --base-api 8400 --n 4
+          estado=$?
+          set -e
+          echo "e2e_ancla_concordia.py → código $estado"
+          if [ "$estado" -eq 2 ]; then
+            echo "::notice title=E2E ancla::NOT_EXECUTABLE — sin HICON_BIN en este runner; la \
+          propiedad no queda demostrada aquí, queda declarada como no medida"
+            exit 0
+          fi
+          exit "$estado"
+
+      - name: Huella del árbol antes de la suite
+        # Se mide para poder afirmar después que la suite no tocó el árbol. Sin la huella de
+        # antes, «no cambió nada» es una suposición.
+        run: python3 scripts/tree_sentinel.py snapshot --out /tmp/arbol-antes.json
+
+      - name: Suite completa
+        # `--verbose` es opción del parser RAÍZ: va ANTES del subcomando. Escrito al revés,
+        # argparse sale con 2 y este trabajo falla siempre sin llegar a ejecutar una prueba.
+        run: python3 refuto.py --verbose selftest
+
+      - name: La suite no deja residuo en el árbol
+        # Una prueba que escribe en el repositorio contamina a la siguiente y, si muta algo
+        # del juez, deja un juez debilitado corriendo sin que nadie lo sepa. Ocurrió el
+        # 2026-09-22: una sonda de mutación murió por señal y dejó `core/evidence.py` mutado,
+        # con `finally` saltado. Desde entonces esto se comprueba en vez de suponerse.
+        run: python3 scripts/tree_sentinel.py verify --against /tmp/arbol-antes.json
+
+  espacio:
+    name: Puertas sobre el espacio de ejemplo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with: { python-version: "3.13" }
+
+      - name: Escáneres de seguridad, anclados y verificados
+        # G-SECURITY salía BLOCKED con «herramientas: ninguna». Eso NO se arregla declarando
+        # que el bloqueo era esperado: se arregla quitando la causa. Un ejecutor sin escáneres
+        # no puede decir si hay secretos, y «no pude mirar» no es «no hay».
+        #
+        # Versión ANCLADA y checksum verificado contra el fichero de la misma release. Una
+        # etiqueta móvil en la cadena de suministro de un escáner de seguridad es la ironía
+        # que este repositorio existe para no cometer: `core/lock.py` ancla por commit
+        # exactamente por esto (ADR-0004).
+        env:
+          GITLEAKS: "8.30.1"
+          SYFT: "1.52.0"
+          TRIVY: "0.74.0"
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d); cd "$tmp"
+          # El tarball se baja CON SU NOMBRE REAL, no renombrado: el fichero de sumas
+          # referencia ese nombre y `sha256sum -c` lo busca en disco. Renombrarlo hacía que
+          # la comprobación fallara con «No such file or directory» y el paso abortara
+          # diciendo «cadena de suministro comprometida» — un falso positivo del propio
+          # control de cadena de suministro. Medido en la corrida 35806… del 2026-09-23.
+          baja() {  # baja() <url-binario> <url-checksums> <nombre-del-fichero>
+            mkdir -p "$3.d" && cd "$3.d"
+            curl -fsSL -o "$3" "$1"
+            curl -fsSL -o SUMAS "$2"
+            grep "  *$3\$" SUMAS | sha256sum -c - || {
+              echo "::error::checksum de $3 no coincide — cadena de suministro comprometida"
+              exit 1; }
+            tar xzf "$3"
+            cd ..
+          }
+          baja "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS}/gitleaks_${GITLEAKS}_linux_x64.tar.gz" \
+               "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS}/gitleaks_${GITLEAKS}_checksums.txt" \
+               "gitleaks_${GITLEAKS}_linux_x64.tar.gz"
+          sudo install -m 0755 "gitleaks_${GITLEAKS}_linux_x64.tar.gz.d/gitleaks" /usr/local/bin/gitleaks
+          baja "https://github.com/anchore/syft/releases/download/v${SYFT}/syft_${SYFT}_linux_amd64.tar.gz" \
+               "https://github.com/anchore/syft/releases/download/v${SYFT}/syft_${SYFT}_checksums.txt" \
+               "syft_${SYFT}_linux_amd64.tar.gz"
+          sudo install -m 0755 "syft_${SYFT}_linux_amd64.tar.gz.d/syft" /usr/local/bin/syft
+          baja "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY}/trivy_${TRIVY}_Linux-64bit.tar.gz" \
+               "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY}/trivy_${TRIVY}_checksums.txt" \
+               "trivy_${TRIVY}_Linux-64bit.tar.gz"
+          sudo install -m 0755 "trivy_${TRIVY}_Linux-64bit.tar.gz.d/trivy" /usr/local/bin/trivy
+          cd - >/dev/null
+          echo "instalados, con checksum verificado:"
+          gitleaks version; syft version | head -2; trivy --version | head -1
+
+      - name: Inicializar el espacio de ejemplo
+        run: |
+          set -euo pipefail
+          python3 refuto.py --workspace examples/espacio-minimo init
+
+      - name: Verificar
+        # Sin red: en CI no se interrogan servidores HTTP ni se consultan orígenes remotos.
+        # Los servidores stdio SÍ se comprueban, porque son procesos locales.
+        #
+        # `verify` sale con 1 (rojo) o 2 (bloqueado) cuando lo hay, y eso debe parar la
+        # integración. El código se captura para poder imprimirlo antes de propagarlo: un
+        # `set -e` a secas deja al lector sin saber cuál de los dos fue.
+        run: |
+          set -uo pipefail
+          # `set +e` explícito. GitHub invoca `bash -e {0}`, y `set -uo pipefail` NO lo
+          # desactiva: el script moría en el `verify` con código distinto de cero y `rc=$?`
+          # no llegaba a ejecutarse nunca. Medido el 2026-09-23 en la primera corrida real de
+          # este flujo: el trabajo fallaba con «exit code 2» sin imprimir una sola línea de
+          # diagnóstico, y la cabecera de este archivo afirmaba que el código se capturaba y
+          # se declaraba. Se capturaba en la intención, no en la ejecución.
+          set +e
+          python3 refuto.py --workspace examples/espacio-minimo verify --offline --json \
+            > refuto-run.json
+          rc=$?
+          set -e
+          echo "verify rc=$rc  (0 integrable · 1 rojo · 2 bloqueado)"
+          test -s refuto-run.json || { echo "verify no produjo salida"; exit 1; }
+          # `--bloqueo-esperado`: este ejecutor no tiene agentes instalados, así que
+          # G-AGENT y las que dependen de él NO se pueden comprobar aquí. Eso está
+          # declarado en `BLOQUEO_ESPERADO` con su motivo, uno a uno. NO convierte
+          # BLOCKED en PASS: el veredicto del espacio se imprime entero y sigue sin ser
+          # integrable. Lo que este trabajo afirma es más estrecho y sí se puede
+          # comprobar: no apareció ningún rojo ni ningún bloqueo NUEVO.
+          python3 scripts/gate_summary.py --bloqueo-esperado refuto-run.json
+          exit $?
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: evidencia
+          path: |
+            refuto-run.json
+            examples/espacio-minimo/.harness/evidence/
+          retention-days: 90
+
+  agentes:
+    name: Sonda de agentes (informativa)
+    runs-on: ubuntu-latest
+    # Los agentes no están instalados en el ejecutor. Este trabajo comprueba que la sonda
+    # REPORTA su ausencia correctamente, no que los agentes existan. Marcar «soportado» un
+    # agente que no está es exactamente lo que refuto existe para impedir.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with: { python-version: "3.13" }
+      - name: La sonda declara NOT_INSTALLED, no revienta ni inventa
+        run: |
+          set -uo pipefail
+          # `probe` sale con 1 cuando algún agente no llega a FUNCTIONAL, que en un ejecutor sin
+          # agentes es SIEMPRE. Ese código no es el criterio de este trabajo, así que se captura
+          # y se declara —no se tapa—. El criterio lo aplica check_probe_honesty.py sobre la
+          # salida: si la sonda revienta o inventa, ese guion falla y el trabajo con él.
+          #
+          # `set +e` por el mismo motivo que en el trabajo «espacio»: `bash -e {0}` mataba el
+          # script en esta línea y la captura nunca ocurría. Comprobado sobre el artefacto real
+          # de la corrida 35803449286: `check_probe_honesty.py probe.json` da rc=0 —la sonda es
+          # honesta, declara NOT_INSTALLED en los cinco agentes—, así que el fallo del trabajo
+          # no venía del criterio sino de que el criterio no se llegaba a aplicar.
+          set +e
+          python3 refuto.py probe --json > probe.json
+          rc=$?
+          set -e
+          echo "probe rc=$rc  (1 es lo esperado en un runner sin agentes instalados)"
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "la sonda salió con $rc, que no es ni 0 ni 1: eso sí es un fallo"; exit "$rc"
+          fi
+          test -s probe.json || { echo "la sonda no produjo salida"; exit 1; }
+          set -e
+          python3 scripts/check_probe_honesty.py probe.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with: { name: sonda, path: probe.json, retention-days: 30 }
+
+  calidad:
+    name: Preflight — calidad, análisis estático y secretos
+    runs-on: ubuntu-latest
+    # `scripts/preflight.py` es el MISMO guion que corre el gancho `pre-push`. Que CI ejecute
+    # otro conjunto de comprobaciones que el local es cómo un preflight deja de significar nada:
+    # pasa en la máquina de quien empuja y se cae aquí, o al contrario. Una fuente, dos sitios.
+    #
+    # `check_wiring.py` lo exige, y no como formalidad: «un guion que existe y que CI no ejecuta
+    # es una comprobación que nadie corre». Este trabajo nació porque esa puerta se puso en rojo
+    # al añadir el preflight, que es exactamente lo que tenía que pasar.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { fetch-depth: 0 }   # `gitleaks detect` recorre el historial, no el árbol
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with: { python-version: "3.13" }
+
+      - name: Herramientas de análisis, con versión anclada
+        env:
+          RUFF: "0.16.9"
+          BANDIT: "1.9.4"
+          ACTIONLINT: "1.7.12"
+          GITLEAKS: "8.30.1"
+        run: |
+          set -euo pipefail
+          # Ancladas por la misma razón que gitleaks/syft/trivy en el trabajo «espacio»: una
+          # herramienta de análisis que cambia de versión sola cambia el veredicto sola, y
+          # entonces un rojo nuevo no distingue «el código empeoró» de «el linter cambió».
+          # `pip` con `==` y `--require-hashes` sería más fuerte; queda declarado como pendiente.
+          python3 -m pip install --quiet "ruff==${RUFF}" "bandit==${BANDIT}"
+          curl -fsSL -o /tmp/actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT}/actionlint_${ACTIONLINT}_linux_amd64.tar.gz"
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+          curl -fsSL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS}/gitleaks_${GITLEAKS}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          ruff --version; bandit --version 2>&1 | head -1
+          actionlint --version; gitleaks version
+
+      - name: Preflight
+        run: |
+          set -uo pipefail
+          # Se excluyen `suite` y `verify` porque los ejecutan los trabajos «contrato» y
+          # «espacio»: duplicarlos costaría ~200 s por corrida y no añadiría una afirmación.
+          # El sobre DECLARA lo que no cubrió, así que el recorte es visible y no silencioso.
+          set +e
+          python3 scripts/preflight.py --excepto suite --excepto verify --json > preflight.json
+          rc=$?
+          set -e
+          echo "preflight rc=$rc  (0 verde · 1 rojo · 2 no se pudo comprobar)"
+          test -s preflight.json || { echo "el preflight no produjo salida"; exit 1; }
+          python3 -c "
+          import json, sys
+          s = json.load(open('preflight.json'))
+          print(f\"  {s['command']}: {s['status']} (exit {s['exit']})\")
+          for c in s['payload']['checks']:
+              print(f\"    {c['status']:<8} {c['nombre']:<18} {c['ms']:>7} ms\")
+          for n in s['next']:
+              print(f\"    → {n['why'][:200]}\")
+          sys.exit(s['exit'])
+          "
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with: { name: preflight, path: preflight.json, retention-days: 30 }

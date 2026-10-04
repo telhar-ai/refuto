@@ -1,0 +1,68 @@
+{
+  "name": "wrong-network-replay",
+  "description": "certificado válido en la red «otra-red» (mismas claves) presentado a la red de la membresía: repetición entre redes",
+  "expected": "INVALID",
+  "reason_contains": "WrongNetwork",
+  "membership": {
+    "protocol_version": "concordia/pbft/v1",
+    "network_id": "254ddbe0ec1e5f3ed4b492876e2b6b9a051436b44c40d00ebd5e72bf7aa88435",
+    "membership_version": 1,
+    "members": [
+      {
+        "index": 0,
+        "member_id": "member-0000",
+        "public_key_hex": "7526c00daf7f0556971b68534a81b67593981e3e45a8cffb746afe3cac4d2e57"
+      },
+      {
+        "index": 1,
+        "member_id": "member-0001",
+        "public_key_hex": "e843ccc053b39415b49b1a49190168ec59f18fbef494abbd8ccac981bc775e98"
+      },
+      {
+        "index": 2,
+        "member_id": "member-0002",
+        "public_key_hex": "19a5f6f488e8780a6210d4971bbab877d190e476b6012b20294b3011dfc26719"
+      },
+      {
+        "index": 3,
+        "member_id": "member-0003",
+        "public_key_hex": "21108cb0df26cc41c62014d4e2d0ab15cf284ec0fcf429743b6412a7c364ca58"
+      }
+    ],
+    "quorum_rule": {
+      "n": 4,
+      "f": 1,
+      "q": 3,
+      "formula": "f = floor((n-1)/3); q = floor((n+f)/2)+1; certificate requires >= q distinct members"
+    },
+    "membership_digest": "8c31b54e876964ae743e708da7cf54250f9d35b524c92958d97414fb9b26c615"
+  },
+  "entry": {
+    "protocol_version": "concordia/pbft/v1",
+    "network_id": "9a4695e0d26d2021caa8cb49427ce0f310dc3db33518a094fc5660e05d7253c4",
+    "membership_version": 1,
+    "membership_digest": "1d056bb4e0539d006ea4cc8d99bd6c415462255d80d5df0bb762df6ff30a57d8",
+    "seq": 1,
+    "payload_digest": "db065a4e74b497538cc26074c3aebf7c16a36c9135c3f7fa66a458a5583c7682",
+    "prev_entry_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "entry_digest": "58066222869ec4a13116d5945a7a9dec54e6c4d2ed9a17ca9b3adf69d1711168",
+    "payload_b64": "ZXZlbnRvLTE=",
+    "attestations": [
+      {
+        "replica": 0,
+        "member_id": "member-0000",
+        "signature_b64": "AQ8PpakyMRJYWQnBCv6AMTtd8TZ3Gv+plAx3EYnaCssspwsQPHaleYnPww6VrPfJvPSJA1kSKP7hDM6n11hkBg=="
+      },
+      {
+        "replica": 1,
+        "member_id": "member-0001",
+        "signature_b64": "WIrGAIVxfe4WOKwh2p1m3qiy+YBfSOta+C8SRWHS38PcvE9vVSxmgtj1oAwkJHO0RM4OOZjLFHrPfaVtuEXvDw=="
+      },
+      {
+        "replica": 2,
+        "member_id": "member-0002",
+        "signature_b64": "RBJKVmgKNsDf20S4ByM1TMfgLQzssaILu+3egmoGnTRauVekD9YCmcI3ZRiOAP5+6anfFdcOBCyJ4Zj5kHVhCw=="
+      }
+    ]
+  }
+}

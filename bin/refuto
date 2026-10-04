@@ -1,0 +1,26 @@
+#!/bin/sh
+# Lanzador del CLI de refuto. Existe para que `refuto verify` —que es como lo escribe toda
+# la documentacion— sea un comando de verdad y no una abreviatura que el lector traduce a mano.
+#
+# Se resuelve solo: refuto es el directorio de arriba, no el directorio actual. Eso importa
+# porque este comando se invoca DESDE el espacio gobernado, que esta en otro sitio.
+set -eu
+
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REFUTO_PY="$BIN_DIR/../refuto.py"
+
+if [ ! -f "$REFUTO_PY" ]; then
+  echo "refuto: no encuentro refuto.py junto a este lanzador ($BIN_DIR/..)." >&2
+  exit 2
+fi
+
+PY=""
+for candidate in python3 python /usr/bin/python3 /opt/homebrew/bin/python3; do
+  if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
+done
+if [ -z "$PY" ]; then
+  echo "refuto: no hay interprete de Python. Se necesita 3.10 o superior." >&2
+  exit 2
+fi
+
+exec "$PY" "$REFUTO_PY" "$@"

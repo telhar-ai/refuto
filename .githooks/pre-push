@@ -1,0 +1,85 @@
+#!/bin/sh
+# Dos cosas antes de empujar: no ir a la rama de integración, y que el preflight esté verde.
+#
+# Lo que este gancho SÍ garantiza y lo que NO
+# -------------------------------------------
+#     SÍ   un empujón distraído a `main` se para y se explica
+#     SÍ   `scripts/preflight.py` corre ANTES de publicar, no cinco minutos después en el runner
+#     NO   no resiste a quien no lo quiera: `git push --no-verify` lo salta, y quien clone el
+#          repositorio no lo tiene instalado hasta que ejecuta `scripts/install_hooks.sh`
+#
+# Decirlo importa. Un control que se presenta como barrera cuando es un recordatorio es peor que
+# no tenerlo: hace creer que hay una defensa donde hay una costumbre. Las barreras reales son
+# `G-PR`, que mira la rama al verificar y no depende de que nadie instale nada, y el trabajo
+# `calidad` de CI, que ejecuta EL MISMO preflight sobre el commit ya publicado.
+#
+# Sobre la protección de rama en el servidor
+# -----------------------------------------
+# Este fichero decía que no estaba disponible, con la medición que lo respaldaba: el 2026-09-23,
+# con el repositorio PRIVADO en plan gratuito, `PUT …/branches/main/protection` daba HTTP 403 y
+# `POST …/rulesets` también. Esa medición sigue siendo cierta y ya no describe la situación: el
+# repositorio pasó a PÚBLICO el 2026-09-25, y en público las reglas de rama sí están
+# disponibles. Mientras nadie las configure, esto es lo que hay — pero ahora la alternativa
+# existe, y es mejor que este gancho porque no se puede saltar con `--no-verify`.
+
+RAMA_PROTEGIDA="main"
+z40="0000000000000000000000000000000000000000"
+RAIZ=$(git rev-parse --show-toplevel) || exit 1
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+    case "$remote_ref" in
+        "refs/heads/$RAMA_PROTEGIDA")
+            [ "$local_sha" = "$z40" ] && continue   # borrado de rama: lo decide otra regla
+            cat >&2 <<EOF
+
+  ✗ empujón directo a «${RAMA_PROTEGIDA}» rechazado
+
+    El cambio como unidad de revisión es lo que hace auditable el historial: sin rama y sin
+    PR no hay nada que citar cuando alguien pregunte «¿qué requisito justifica esto?».
+    G-PR lo comprueba y lo pone en rojo; esto lo para antes.
+
+    Haga:
+        git switch -c <rama-de-trabajo>
+        git push -u origin <rama-de-trabajo>
+        gh pr create
+
+    Si de verdad hace falta empujar a «${RAMA_PROTEGIDA}», este gancho se salta con
+    \`--no-verify\`. Que sea explícito es el punto: queda en el reflog de quien lo hizo.
+
+EOF
+            exit 1
+            ;;
+    esac
+done
+
+# ── preflight ────────────────────────────────────────────────────────────────────────
+#
+# Sin exclusiones: en local, un preflight que no ejecuta la suite no afirma nada útil. En CI sí
+# se excluyen `suite` y `verify`, porque allí los cubren otros trabajos — y el sobre lo declara.
+#
+# `HARNESS_SIN_PREFLIGHT=1` lo omite para el caso en que el preflight sea justo lo que se está
+# arreglando. Es una variable explícita y no una bandera silenciosa, por el mismo motivo que
+# `--no-verify`: que quede constancia de la decisión.
+if [ "${HARNESS_SIN_PREFLIGHT:-0}" = "1" ]; then
+    printf '\n  ! preflight omitido por HARNESS_SIN_PREFLIGHT=1\n\n' >&2
+    exit 0
+fi
+
+printf '\n  preflight antes de empujar (omítalo con HARNESS_SIN_PREFLIGHT=1)\n' >&2
+if ! python3 "$RAIZ/scripts/preflight.py" >&2; then
+    cat >&2 <<'EOF'
+
+  ✗ el preflight no está verde: el empujón se para aquí
+
+    Cada control sin aprobar trae arriba su motivo, la orden que lo arregla y de quién es el
+    turno. Un control BLOCKED no es lo mismo que uno FAIL: BLOCKED significa que no se pudo
+    comprobar —una herramienta ausente, un tiempo agotado— y tampoco aprueba.
+
+    Si lo que está arreglando ES el preflight:
+        HARNESS_SIN_PREFLIGHT=1 git push …
+
+EOF
+    exit 1
+fi
+
+exit 0

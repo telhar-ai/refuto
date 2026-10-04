@@ -1,0 +1,24 @@
+# El repositorio se comporta igual en los tres sistemas, y no depende de la configuración
+# personal de quien clona.
+#
+# Sin esto manda `core.autocrlf` de cada máquina: con `true` —el valor por defecto del
+# instalador de Windows— el árbol de trabajo recibe CRLF en TODO. Es el mismo mordisco que en
+# `gradlew`: un guion con `#!/bin/sh` y finales de Windows no arranca, y el mensaje de error no
+# apunta al fichero. Y aquí duele el doble, porque este proyecto compara por huella: el mismo
+# documento con dos finales distintos son dos huellas distintas, y una puerta falla sin tener
+# nada que reprochar.
+* text=auto eol=lf
+
+# La excepción, y es al revés: cmd.exe ejecuta mal un .cmd con finales de línea de Unix.
+# `core/launcher.py` ya lo escribe en CRLF; esto impide que git se lo deshaga al pasar por el
+# índice.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binarios: que git no intente normalizarlos jamás.
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary
+*.docx binary
+*.zip binary

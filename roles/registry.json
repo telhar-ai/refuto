@@ -1,0 +1,739 @@
+{
+  "schema": "harness.roles/v1",
+  "_que_es": "Taxonomia de roles de ingenieria. Un ROL es una unidad de trabajo con contrato; un AGENTE es un runtime que puede ejecutarlo. El router empareja los dos por capacidad, nunca por nombre. Anadir un rol es anadir un objeto aqui.",
+  "version": "1",
+  "roles": [
+    {
+      "id": "product-strategist",
+      "group": "management",
+      "phase": "DISCOVER",
+      "purpose": "Convierte una intención de negocio en un problema acotado, con el descarte razonado.",
+      "input_contract": [
+        "intent"
+      ],
+      "output_contract": [
+        "problem-statement",
+        "success-criteria"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_write_code",
+        "no_shell"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [
+        "requirements-engineer"
+      ],
+      "notes": "No escribe requisitos: acota el problema. Mezclar las dos cosas produce requisitos que justifican una solución ya elegida."
+    },
+    {
+      "id": "delivery-manager",
+      "group": "management",
+      "phase": "PLAN",
+      "purpose": "Ordena el trabajo en un plan con dependencias, riesgos y puntos de decisión humana.",
+      "input_contract": [
+        "specification",
+        "architecture"
+      ],
+      "output_contract": [
+        "plan",
+        "risk-register"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_write_code",
+        "no_shell"
+      ],
+      "quality_gates": [
+        "G-TRACE"
+      ],
+      "human_review": "",
+      "handoff": [
+        "backend-engineer",
+        "frontend-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "requirements-engineer",
+      "group": "specification",
+      "phase": "SPECIFY",
+      "purpose": "Escribe requisitos verificables en EARS, cada uno con su criterio de aceptación.",
+      "input_contract": [
+        "problem-statement",
+        "user-stories"
+      ],
+      "output_contract": [
+        "requirements"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_shell",
+        "no_write_code"
+      ],
+      "quality_gates": [
+        "G-TRACE",
+        "G-SDD"
+      ],
+      "human_review": "HUMAN_APPROVAL",
+      "handoff": [
+        "solution-architect"
+      ],
+      "notes": "Sin consola a propósito: esta fase no ejecuta nada, y dársela sería regalar superficie a cambio de nada."
+    },
+    {
+      "id": "acceptance-engineer",
+      "group": "specification",
+      "phase": "SPECIFY",
+      "purpose": "Deriva criterios de aceptación ejecutables de cada requisito.",
+      "input_contract": [
+        "requirements"
+      ],
+      "output_contract": [
+        "acceptance-criteria"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep"
+      ],
+      "constraints": [
+        "no_shell",
+        "no_write_code"
+      ],
+      "quality_gates": [
+        "G-TRACE"
+      ],
+      "human_review": "",
+      "handoff": [
+        "test-strategist"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "solution-architect",
+      "group": "architecture",
+      "phase": "ARCHITECT",
+      "purpose": "Decide la estructura, con al menos una alternativa descartada y su condición de reversión.",
+      "input_contract": [
+        "requirements"
+      ],
+      "output_contract": [
+        "architecture",
+        "adr"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_write_code"
+      ],
+      "quality_gates": [
+        "G-SDD"
+      ],
+      "human_review": "HUMAN_APPROVAL",
+      "handoff": [
+        "backend-engineer",
+        "frontend-engineer",
+        "security-architect"
+      ],
+      "notes": "Una decisión sin descarte razonado es una preferencia."
+    },
+    {
+      "id": "security-architect",
+      "group": "architecture",
+      "phase": "ARCHITECT",
+      "purpose": "Modela amenazas y superficie de ataque antes de que exista el código.",
+      "input_contract": [
+        "architecture"
+      ],
+      "output_contract": [
+        "threat-model",
+        "security-requirements"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep"
+      ],
+      "constraints": [
+        "no_write_code"
+      ],
+      "quality_gates": [
+        "G-POLICY"
+      ],
+      "human_review": "",
+      "handoff": [
+        "security-engineer"
+      ],
+      "notes": "Lo regulatorio y lo de seguridad entra al diseño, no a la revisión final."
+    },
+    {
+      "id": "data-architect",
+      "group": "architecture",
+      "phase": "ARCHITECT",
+      "purpose": "Define contratos de datos, linaje y clasificación.",
+      "input_contract": [
+        "architecture"
+      ],
+      "output_contract": [
+        "data-contracts"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep"
+      ],
+      "constraints": [
+        "no_write_code"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [
+        "data-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ux-designer",
+      "group": "ux",
+      "phase": "DESIGN",
+      "purpose": "Define estados, recorrido y jerarquía visual contra el sistema de diseño.",
+      "input_contract": [
+        "requirements",
+        "design-tokens"
+      ],
+      "output_contract": [
+        "ux-spec"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep"
+      ],
+      "constraints": [
+        "no_write_code"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [
+        "frontend-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "accessibility-engineer",
+      "group": "ux",
+      "phase": "DESIGN",
+      "purpose": "Diseña la accesibilidad; no la corrige al final.",
+      "input_contract": [
+        "ux-spec"
+      ],
+      "output_contract": [
+        "a11y-spec"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep"
+      ],
+      "constraints": [],
+      "quality_gates": [
+        "G-SDD"
+      ],
+      "human_review": "",
+      "handoff": [
+        "frontend-engineer"
+      ],
+      "notes": "Un arreglo de accesibilidad al final es un rediseño."
+    },
+    {
+      "id": "backend-engineer",
+      "group": "development",
+      "phase": "IMPLEMENT",
+      "purpose": "Implementa lógica de servidor y contratos de API contra la especificación aprobada.",
+      "input_contract": [
+        "specification",
+        "architecture",
+        "plan"
+      ],
+      "output_contract": [
+        "code",
+        "unit-tests"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_modify_verifier",
+        "no_modify_evidence",
+        "no_secret_access"
+      ],
+      "quality_gates": [
+        "G-SDD",
+        "G-POLICY"
+      ],
+      "human_review": "",
+      "handoff": [
+        "test-engineer",
+        "security-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "frontend-engineer",
+      "group": "development",
+      "phase": "IMPLEMENT",
+      "purpose": "Implementa la interfaz por tokens, con marcado semántico y lógica separada del documento.",
+      "input_contract": [
+        "ux-spec",
+        "a11y-spec",
+        "design-tokens"
+      ],
+      "output_contract": [
+        "code",
+        "unit-tests"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_modify_verifier",
+        "no_modify_evidence"
+      ],
+      "quality_gates": [
+        "G-SDD"
+      ],
+      "human_review": "",
+      "handoff": [
+        "visual-validator",
+        "test-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "data-engineer",
+      "group": "development",
+      "phase": "IMPLEMENT",
+      "purpose": "Implementa canalizaciones y transformaciones contra los contratos de datos.",
+      "input_contract": [
+        "data-contracts"
+      ],
+      "output_contract": [
+        "code",
+        "unit-tests"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell",
+        "grep"
+      ],
+      "constraints": [
+        "no_modify_verifier",
+        "no_secret_access"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [
+        "test-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "test-strategist",
+      "group": "quality",
+      "phase": "PLAN",
+      "purpose": "Decide qué nivel de la pirámide cubre cada requisito, y por qué.",
+      "input_contract": [
+        "acceptance-criteria"
+      ],
+      "output_contract": [
+        "test-strategy"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep"
+      ],
+      "constraints": [
+        "no_write_code"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [
+        "test-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "test-engineer",
+      "group": "quality",
+      "phase": "TEST",
+      "purpose": "Escribe y ejecuta pruebas que citan el requisito que comprueban.",
+      "input_contract": [
+        "code",
+        "test-strategy"
+      ],
+      "output_contract": [
+        "tests",
+        "coverage",
+        "test-report"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell",
+        "grep"
+      ],
+      "constraints": [
+        "no_modify_verifier",
+        "no_modify_evidence"
+      ],
+      "quality_gates": [
+        "G-SDD",
+        "G-TRACE"
+      ],
+      "human_review": "",
+      "handoff": [
+        "reviewer"
+      ],
+      "notes": "La cita del requisito va en el NOMBRE de la prueba: sin eso, la trazabilidad es un documento en vez de una propiedad."
+    },
+    {
+      "id": "visual-validator",
+      "group": "quality",
+      "phase": "VALIDATE",
+      "purpose": "Sirve, navega, captura y compara contra el lienzo. Observa; no repara.",
+      "input_contract": [
+        "code",
+        "ux-spec"
+      ],
+      "output_contract": [
+        "visual-report",
+        "screenshots"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use",
+        "browser.automation"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell",
+        "browser"
+      ],
+      "constraints": [
+        "no_modify_product",
+        "no_modify_verifier"
+      ],
+      "quality_gates": [
+        "G-SDD"
+      ],
+      "human_review": "HUMAN_VISUAL_REVIEW",
+      "handoff": [
+        "reviewer"
+      ],
+      "notes": "Si el mismo agente pudiera corregir lo que juzga, el ciclo se queda sin juez independiente y converge a «ya está bien» sin haberlo estado."
+    },
+    {
+      "id": "performance-engineer",
+      "group": "quality",
+      "phase": "TEST",
+      "purpose": "Mide latencia, carga y consumo contra un umbral declarado antes de medir.",
+      "input_contract": [
+        "code"
+      ],
+      "output_contract": [
+        "performance-report"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell"
+      ],
+      "constraints": [
+        "no_modify_verifier"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [],
+      "notes": ""
+    },
+    {
+      "id": "security-engineer",
+      "group": "security",
+      "phase": "SECURE",
+      "purpose": "Escanea dependencias, secretos y código; produce SBOM y bloquea lo crítico.",
+      "input_contract": [
+        "code",
+        "threat-model"
+      ],
+      "output_contract": [
+        "sbom",
+        "security-report"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use",
+        "security.scan"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell",
+        "grep"
+      ],
+      "constraints": [
+        "no_modify_verifier",
+        "no_modify_evidence",
+        "no_secret_access"
+      ],
+      "quality_gates": [
+        "G-SECURITY"
+      ],
+      "human_review": "HUMAN_SECURITY_REVIEW",
+      "handoff": [
+        "release-engineer"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "adversarial-reviewer",
+      "group": "security",
+      "phase": "VALIDATE",
+      "purpose": "Revisa intentando refutar, no confirmar. No propone soluciones.",
+      "input_contract": [
+        "code",
+        "architecture",
+        "test-report"
+      ],
+      "output_contract": [
+        "findings"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_write_code",
+        "no_shell",
+        "no_fix_what_it_reviews"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [
+        "reviewer"
+      ],
+      "notes": "Un revisor que arregla lo que critica deja de criticar con dureza, porque arreglar es más cómodo que derribar."
+    },
+    {
+      "id": "reviewer",
+      "group": "quality",
+      "phase": "VALIDATE",
+      "purpose": "Consolida el estado de las puertas y decide si el cambio es integrable.",
+      "input_contract": [
+        "test-report",
+        "security-report",
+        "findings",
+        "visual-report"
+      ],
+      "output_contract": [
+        "review-report"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "grep"
+      ],
+      "constraints": [
+        "no_write_code",
+        "no_self_approval"
+      ],
+      "quality_gates": [
+        "G-PR",
+        "G-HUMAN"
+      ],
+      "human_review": "HUMAN_PR_REVIEW",
+      "handoff": [
+        "release-engineer"
+      ],
+      "notes": "No puede revisar un cambio que produjo el mismo agente. Lo comprueba G-HUMAN, que exige que quien aprueba no sea quien genero; no depende de la buena voluntad. Ojo: es una puerta, no el guardian, asi que actua al verificar, no al escribir."
+    },
+    {
+      "id": "release-engineer",
+      "group": "devops",
+      "phase": "RELEASE",
+      "purpose": "Empaqueta, firma y publica; verifica que lo desplegado es lo que se aprobó.",
+      "input_contract": [
+        "review-report",
+        "sbom"
+      ],
+      "output_contract": [
+        "release",
+        "attestation"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use",
+        "vcs.git"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "shell"
+      ],
+      "constraints": [
+        "no_modify_evidence",
+        "destructive_requires_approval"
+      ],
+      "quality_gates": [
+        "G-LOCK",
+        "G-HUMAN"
+      ],
+      "human_review": "HUMAN_RELEASE_APPROVAL",
+      "handoff": [],
+      "notes": ""
+    },
+    {
+      "id": "observability-engineer",
+      "group": "devops",
+      "phase": "OBSERVE",
+      "purpose": "Comprueba que lo desplegado se comporta como se dijo: salud, métricas y trazas.",
+      "input_contract": [
+        "release"
+      ],
+      "output_contract": [
+        "observation-report"
+      ],
+      "required_capabilities": [
+        "agent.headless",
+        "agent.tool_use"
+      ],
+      "allowed_tools": [
+        "read",
+        "shell"
+      ],
+      "constraints": [
+        "read_only_infrastructure"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [],
+      "notes": "Un despliegue no es correcto porque `kubectl apply` devolviera 0."
+    },
+    {
+      "id": "technical-writer",
+      "group": "documentation",
+      "phase": "DOCUMENT",
+      "purpose": "Documenta lo que existe, con la voz del proyecto y sin inventar lo que no comprobó.",
+      "input_contract": [
+        "architecture",
+        "code",
+        "review-report"
+      ],
+      "output_contract": [
+        "documentation"
+      ],
+      "required_capabilities": [
+        "agent.headless"
+      ],
+      "allowed_tools": [
+        "read",
+        "write",
+        "grep",
+        "glob"
+      ],
+      "constraints": [
+        "no_write_code",
+        "no_shell"
+      ],
+      "quality_gates": [],
+      "human_review": "",
+      "handoff": [],
+      "notes": ""
+    }
+  ]
+}

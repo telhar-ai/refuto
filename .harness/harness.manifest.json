@@ -1,0 +1,46 @@
+{
+  "schema": "harness.manifest/v1",
+  "_que_es": "Lo que este espacio declara necesitar. La otra mitad del contrato es harness.lock.json, que dice con qué se materializó realmente.",
+  "harness": {
+    "version": "0.2.2",
+    "min_python": "3.10"
+  },
+  "workspace": {
+    "name": "refuto",
+    "profile": "standard"
+  },
+  "agents": {},
+  "gates": [
+    "G-AGENT",
+    "G-FLEET",
+    "G-HUMAN",
+    "G-LOCK",
+    "G-MANIFEST",
+    "G-MCP",
+    "G-POLICY",
+    "G-PR",
+    "G-ROLES",
+    "G-SDD",
+    "G-SECURITY",
+    "G-SKILL",
+    "G-TRACE"
+  ],
+  "skills": {
+    "roots": [
+      ".claude/skills",
+      ".kiro/skills"
+    ],
+    "require_name_matches_directory": true
+  },
+  "mcp": {
+    "protocol_version": "2026-07-28"
+  },
+  "_actualizaciones": [
+    {
+      "desde": "0.2.0",
+      "hasta": "0.2.2",
+      "cuando": "2026-09-17T15:41:48.398+00:00",
+      "por": "root"
+    }
+  ]
+}

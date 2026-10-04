@@ -1,0 +1,90 @@
+diff --git a/gates/g_security.py b/gates/g_security.py
+index 7f459af..7664564 100644
+--- a/gates/g_security.py
++++ b/gates/g_security.py
+@@ -38,8 +38,13 @@ MAX_BYTES = 2_000_000
+ 
+ def run(ctx) -> Result:
+     findings, observations, evidence = [], [], []
+     blocked = False
++    # Qué herramienta produjo RESULTADO, para poder decirlo en `measure`. La versión anterior
++    # enumeraba las instaladas con `shutil.which()`, así que la evidencia afirmaba «herramientas:
++    # gitleaks, syft, trivy» con trivy caído y sin un solo escaneo. El campo con el que la puerta
++    # se justifica no puede nombrar a quien no hizo nada.
++    usadas = []
+ 
+     # 1 · Secretos. Siempre corre: no depende de nada instalado.
+     scanned, hits = _scan_secrets(ctx.workspace)
+     for rel, line_no, labels in hits:
+@@ -53,15 +58,21 @@ def run(ctx) -> Result:
+         out = _run_json(["gitleaks", "detect", "--no-banner", "--report-format", "json",
+                          "--report-path", "-", "-s", str(ctx.workspace)])
+         if out["ok"]:
+             n = len(out["data"] or [])
++            usadas.append("gitleaks")
+             observations.append(f"gitleaks: {n} hallazgos")
+             for h in (out["data"] or [])[:10]:
+                 findings.append(Finding(h.get("File", "?"),
+                                         f"gitleaks: {h.get('RuleID', 'regla desconocida')}",
+                                         int(h.get("StartLine") or 0)))
+         else:
+-            observations.append(f"gitleaks presente y no se pudo ejecutar: {out['error'][:120]}")
++            # Presente y caída es el TERCER caso, y no estaba: el umbral sólo distinguía
++            # ausente de presente. Una herramienta que revienta no escaneó nada, luego no
++            # puede aportar un aprobado. `syft`, aquí abajo, ya lo hacía bien.
++            blocked = True
++            observations.append(f"gitleaks presente y no se pudo ejecutar: "
++                                f"{out['error'][:120]}. No escaneó nada → BLOCKED.")
+     else:
+         observations.append("gitleaks NO está: el escaneo profundo de secretos no se ejecutó. "
+                             "Sólo consta el escaneo propio de refuto, que es más superficial.")
+ 
+@@ -75,9 +86,19 @@ def run(ctx) -> Result:
+             n = len(out["data"].get("artifacts") or [])
+             evidence.append(Evidence(kind="command", summary=f"SBOM con {n} componentes",
+                                      command="syft scan dir:. -o syft-json",
+                                      source=str(sbom_path)))
++            usadas.append("syft")
+             observations.append(f"SBOM generado: {n} componentes")
++            if n == 0:
++                # Un ámbito vacío nunca aprueba. «0 componentes» no dice «no hay dependencias»:
++                # dice que no se inventarió nada, y ante un CVE las dos cosas se responden
++                # distinto. Medido el 2026-09-24 en un espacio real de 38 ficheros: SBOM de 0
++                # componentes y la puerta en PASS.
++                blocked = True
++                observations.append(
++                    "el SBOM no trae ni un componente: ámbito vacío, no inventario limpio. "
++                    "→ BLOCKED, nunca PASS.")
+         else:
+             blocked = True
+             observations.append(f"syft presente y falló: {out['error'][:120]}")
+     else:
+@@ -100,11 +121,14 @@ def run(ctx) -> Result:
+                                                 f"CRÍTICA {v.get('VulnerabilityID')} en "
+                                                 f"{v.get('PkgName')}"))
+                     else:
+                         high += 1
++            usadas.append("trivy")
+             observations.append(f"trivy: {crit} críticas · {high} altas")
+         else:
+-            observations.append(f"trivy presente y falló: {out['error'][:120]}")
++            blocked = True
++            observations.append(f"trivy presente y falló: {out['error'][:120]}. No escaneó "
++                                f"ninguna vulnerabilidad → BLOCKED.")
+     else:
+         blocked = True
+         observations.append("trivy NO está: no se escanearon vulnerabilidades conocidas. "
+                             "→ BLOCKED. Instale con `brew install trivy`.")
+@@ -112,10 +136,10 @@ def run(ctx) -> Result:
+     status = FAIL if findings else (BLOCKED if blocked else PASS)
+     return Result(GATE_ID, TITLE, status, severity=CRITICAL if findings else HIGH,
+                   threshold=THRESHOLD,
+                   measure=f"{scanned} archivos recorridos · {len(findings)} hallazgos · "
+-                          f"herramientas: "
+-                          f"{', '.join(t for t in ('gitleaks','syft','trivy') if shutil.which(t)) or 'ninguna'}",
++                          f"herramientas que produjeron resultado: "
++                          f"{', '.join(usadas) or 'ninguna'}",
+                   findings=findings, observations=observations, evidence=evidence)
+ 
+ 
+ def _scan_secrets(root: Path) -> tuple[int, list]:

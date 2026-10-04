@@ -1,0 +1,23 @@
+# Dependabot — y por qué sólo hay un ecosistema aquí
+#
+# refuto corre **sólo con biblioteca estándar de Python** (ADR-0002): no hay `requirements.txt`,
+# ni `pyproject` con dependencias de ejecución, ni `package.json`. Declarar un ecosistema `pip`
+# que no tiene nada que actualizar produciría un informe vacío cada semana, y un control que
+# siempre sale verde porque no mira nada es peor que no tenerlo: ocupa el sitio de uno real.
+#
+# Lo que SÍ es superficie de suministro en este repositorio son las **acciones de GitHub** que
+# ejecuta el flujo de CI. Una acción de terceros anclada a una etiqueta móvil puede cambiar de
+# contenido sin que cambie la referencia — el mismo problema que `core/lock.py` resuelve para
+# los orígenes git anclando por commit, aplicado aquí por Dependabot.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - dependencias
+      - seguridad

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:refuto:schema:envelope:v1",
+  "title": "Envoltura de respuesta de refuto — un vocabulario, tres consumidores",
+  "description": "Lo que toda orden de refuto emite con --json. El sobre se unifica; la carga útil de cada orden viaja intacta bajo `payload` con su propio contrato `harness.*/vN`. `status` es el campo autoritativo: `exit` es una proyección gruesa de seis estados sobre cuatro códigos, para encadenar en consola. `next` es obligatorio cuando el estado no aprueba.",
+  "type": "object",
+  "required": ["schema", "command", "status", "exit", "workspace", "generated_at", "provenance",
+               "payload", "next"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "harness.envelope/v1" },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "La orden que responde, tal como se invoca (`verify`, `policy refine`)."
+    },
+    "status": {
+      "enum": ["PASS", "FAIL", "BLOCKED", "NOT_EXECUTABLE", "NOT_APPLICABLE", "INCONCLUSIVE"],
+      "description": "Los seis estados del contrato de refuto. «Pendiente» no es un estado."
+    },
+    "exit": {
+      "enum": [0, 1, 2, 64],
+      "description": "Derivado de `status`, nunca elegido a mano. 0 nada que arreglar · 1 algo está mal · 2 no se pudo comprobar · 64 invocación incorrecta."
+    },
+    "workspace": { "type": "string", "minLength": 1 },
+    "run_id": {
+      "type": "string",
+      "description": "Identidad tipada de la ejecución cuando la orden acuña una; cadena vacía cuando no."
+    },
+    "generated_at": { "type": "string", "minLength": 20 },
+    "provenance": {
+      "type": "object",
+      "description": "De dónde sale esta respuesta: versión del motor, commit, rama, python. Una cifra sin procedencia no es una medición."
+    },
+    "payload": {
+      "description": "La carga útil de la orden, con su propio contrato. Objeto o lista según la orden; no se normaliza para no perder lo que cada una tiene de más.",
+      "type": ["object", "array", "null"]
+    },
+    "next": {
+      "type": "array",
+      "description": "Qué toca después. Obligatoriamente no vacío cuando `status` es FAIL, BLOCKED, NOT_EXECUTABLE o INCONCLUSIVE: un estado que no aprueba y no dice qué hacer con ello desvía a quien lo lee.",
+      "items": { "$ref": "#/$defs/siguiente" }
+    }
+  },
+  "$defs": {
+    "siguiente": {
+      "type": "object",
+      "required": ["why", "do", "who"],
+      "additionalProperties": false,
+      "properties": {
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "description": "El motivo. Un paso sin motivo es una orden que nadie puede evaluar."
+        },
+        "do": {
+          "type": "string",
+          "description": "La orden EJECUTABLE, no su descripción. Vacía sólo cuando el paso es una decisión y no hay nada que ejecutar."
+        },
+        "who": {
+          "enum": ["persona", "maquina", "agente"],
+          "description": "De quién es el turno. `maquina` significa idempotente y sin decisión: automatizable sin que nadie mire. `persona` significa que hay un juicio que el arnés no puede emitir. `agente` es trabajo que un agente de código puede hacer y alguien revisará."
+        }
+      }
+    }
+  }
+}

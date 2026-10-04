@@ -1,0 +1,69 @@
+{
+  "schema": "harness.policy/v1",
+  "version": "1",
+  "protected_paths": [
+    "verification/**",
+    "verificacion/**",
+    ".kiro/steering/**",
+    ".harness/**",
+    "inputs/**",
+    "insumos/**",
+    "evidence/**",
+    "evidencia/**",
+    "gates/**",
+    "policies/**",
+    "*.lock.json",
+    "harness.manifest.json",
+    "harness.lock.json"
+  ],
+  "secret_read_deny": [
+    "**/.env",
+    "**/.env.*",
+    "**/secrets/**",
+    "**/*.pem",
+    "**/*.key",
+    "**/id_rsa",
+    "**/id_ed25519",
+    "**/credentials",
+    "**/.netrc",
+    "**/auth.json",
+    "**/.aws/credentials"
+  ],
+  "command_deny": [
+    "rm -rf:*",
+    "rm -fr:*",
+    "rm -Rf:*",
+    "rm --recursive --force:*",
+    "sudo:*",
+    "chmod -R 777:*",
+    "dd:*",
+    "mkfs:*",
+    "git push --force:*",
+    "git push -f:*",
+    "curl* | sh",
+    "curl* | bash",
+    "wget* | sh",
+    "wget* | bash",
+    "git reset --hard:*",
+    "git clean -fdx:*"
+  ],
+  "command_ask": [
+    "git push:*",
+    "gh pr:*",
+    "glab mr:*",
+    "npm publish:*",
+    "docker push:*",
+    "kubectl apply:*",
+    "terraform apply:*",
+    "aws *:*"
+  ],
+  "block_secret_content": true,
+  "network_rules": [],
+  "default_modes": {
+    "claude": "acceptEdits",
+    "kiro": "declared-in-agent",
+    "gemini": "default",
+    "opencode": "ask",
+    "codex": "unknown"
+  }
+}

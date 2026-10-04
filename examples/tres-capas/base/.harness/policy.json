@@ -1,0 +1,12 @@
+{
+  "schema": "harness.policy/v1",
+  "name": "base",
+  "version": "1",
+  "_que_es": "CAPA 1 — la norma. Lo que ningún cliente ni proyecto puede retirar. En un espacio real su sitio es `policies/base.json`, que está protegido: crear la norma raíz es un acto de persona, no de agente.",
+  "protected_paths": ["verificacion/**", "verification/**", ".harness/**", "gates/**", "policies/**", "*.lock.json"],
+  "command_deny": ["rm -rf:*", "sudo:*", "git push --force:*", "curl* | sh"],
+  "secret_read_deny": [".ssh/id_*", "*.pem", ".git-credentials"],
+  "block_secret_content": true,
+  "writable_paths": [".harness/memory/**"],
+  "default_modes": {"claude": "acceptEdits"}
+}

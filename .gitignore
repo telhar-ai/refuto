@@ -1,0 +1,44 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Artefactos de empaquetado. `pyproject.toml` existe, luego cualquiera puede ejecutar
+# `pip install .` o `python -m build` — y hasta el 2026-09-25 eso dejaba `build/` (936 KB) y
+# `refuto.egg-info/` (28 KB) sin excluir, listos para colarse en el siguiente commit. Se
+# descubrió midiendo justo eso: comprobar si el paquete instalado resuelve `schemas/`.
+build/
+dist/
+*.egg-info/
+
+# Ajustes LOCALES de cada agente. Llevan dentro la ruta ABSOLUTA del guardián —
+# `/ruta/de/quien/instala/.harness/bin/guard`— porque el gancho se escribe con la ruta
+# resuelta de esa máquina. Hasta el 2026-09-22 este repositorio no los excluía: se salvaban
+# sólo por el `~/.config/git/ignore` de quien lo tenía configurado. En otra máquina, o en CI,
+# se habrían subido con esa ruta dentro. Una exclusión que depende de la configuración
+# personal de cada uno no es una exclusión: es suerte.
+.claude/settings.local.json
+.agents/hooks.local.json
+.codex/hooks.local.json
+.kiro/hooks/*.local.json
+
+# Estado LOCAL del espacio: nunca se versiona. Así entraron notas de un cliente en
+# este repositorio antes de su primera publicación; refuto genera este mismo
+# .gitignore en cada espacio que instala (core/session.py::ensure_gitignore).
+#
+# Con `**/` a propósito, y corregido el 2026-09-23. Un patrón con una `/` intermedia lo ancla
+# git al directorio de este fichero, así que `.harness/evidence/` NO alcanzaba un `.harness/`
+# anidado — y `examples/` tiene tres. Un diario de validación se coló en el índice por ahí.
+# El espacio de ejemplo que nace de `refuto init` se salvaba sólo porque init le escribe su
+# propio `.gitignore`; un árbol montado a mano no tiene esa red.
+**/.harness/evidence/
+**/.harness/state/
+**/.harness/context/
+**/.harness/memory/
+**/.harness/backup/
+**/.harness/bin/
+**/.harness/binding.json
+
+# Rastro de sesión que deja la CLI de un espacio cliente cuando se abre desde aquí. Lleva el
+# nombre del cliente en la ruta y este repositorio es público: sin esta línea, un `git add -A`
+# lo publica. Es el accidente que `AGENTS.md` cuenta en su primer párrafo, repetido.
+.telhar-cli/

@@ -1,0 +1,72 @@
+# Parche propuesto · `gates/g_roles.py` — que la puerta DIGA lo que ahora verifica
+#
+# NO se aplica desde una sesión de agente. `gates/**` está protegido por la política: «un
+# agente que edita lo que lo evalúa no está aprobando: está moviendo la puerta». Esta sesión lo
+# comprobó de la peor manera — dos ediciones a este mismo fichero pasaron por `python3` con
+# `pathlib.write_text`, que `core.effects` no puede derivar (`Ê ⊆ Effects`) y por tanto marcó
+# `opaco: true` y dejó pasar. Quedaron registradas en el diario (entrada 03:13:19, `allow`,
+# `opaco: true`), que es exactamente lo que `I6'` promete y lo único que promete. Se revirtieron
+# y el cambio viaja aquí.
+#
+# QUÉ HACE
+# 1. Publica el reparto de capacidades en las observaciones: cuántas restricciones APLICA el
+#    guardián y cuántas están declaradas no observables con su motivo. Sin esto, «22 roles ·
+#    0 problemas» no distingue un registro cuyas restricciones se aplican de uno cuyas
+#    restricciones sólo se describen — y ésa es la distinción que costó el defecto que
+#    `core/roles.py` acaba de cerrar.
+# 2. Declara `Scope`. `Result` lo exige para aprobar y el veredicto lo comprueba, y medido el
+#    2026-09-25 **ninguna de las 13 puertas lo declaraba**: cero `scope=` en `gates/`. Es la
+#    misma clase de defecto una vez más: un campo del contrato que no usa nadie. Este parche lo
+#    cierra sólo en G-ROLES; las otras 12 siguen igual y eso es un hallazgo aparte.
+#
+# QUÉ NO HACE
+# No cambia el veredicto de la puerta. `core/roles.py` ya validaba contra
+# `core.capabilities.CONOCIDAS` antes de este parche, así que el criterio está aplicado; lo que
+# falta es que el informe lo cuente.
+#
+# CÓMO APLICARLO (lo hace una persona, desde una sesión no gobernada)
+#     git apply docs/remediation/g-roles-capacidades-y-cobertura.patch
+#     python3 refuto.py verify --gate G-ROLES
+
+--- a/gates/g_roles.py
++++ b/gates/g_roles.py
+@@ -7,7 +7,7 @@
+ 
+ from __future__ import annotations
+ 
+-from core.model import FAIL, Finding, MEDIUM, PASS, Result
++from core.model import FAIL, Finding, MEDIUM, PASS, Result, Scope
+ from core.roles import load, validate_registry
+ 
+ GATE_ID = "G-ROLES"
+@@ -25,11 +25,29 @@
+         for r in roles.values():
+             groups[r.group] = groups.get(r.group, 0) + 1
+         observations.append("grupos: " + " · ".join(f"{g}({n})" for g, n in sorted(groups.items())))
++        # El reparto de capacidades, publicado. «22 roles · 0 problemas» no permite
++        # distinguir un registro cuyas restricciones se APLICAN de uno cuyas restricciones
++        # sólo se describen, y ésa es justo la distincion que costo el defecto.
++        from core.capabilities import APLICADAS, NO_OBSERVABLES
++        usadas = {c for r in roles.values() for c in r.constraints}
++        aplicadas = sorted(usadas & set(APLICADAS))
++        declaradas = sorted(usadas & set(NO_OBSERVABLES))
++        observations.append(
++            f"capacidades: {len(aplicadas)} las aplica el guardian "
++            f"({', '.join(aplicadas)}) · {len(declaradas)} declaradas NO observables en esta "
++            f"frontera, con su motivo ({', '.join(declaradas)})")
+         sin_gates = [r.id for r in roles.values() if not r.quality_gates]
+         if sin_gates:
+             observations.append(f"{len(sin_gates)} roles sin puerta declarada: "
+                                 f"{', '.join(sin_gates[:8])}. Su salida no la comprueba nadie.")
++    # `Scope` es obligatorio para aprobar —`Result` lo exige y el veredicto lo comprueba— y
++    # NINGUNA de las 13 puertas lo declaraba: medido el 2026-09-25, cero `scope=` en `gates/`.
++    # Es la misma clase de defecto que este gate cierra: un campo que existe en el contrato y
++    # que no usa nadie. `unknown=1` cuando el registro no se pudo cargar, porque no saber
++    # cuantos roles hay no es haber comprobado cero.
++    alcance = Scope(examined=len(roles), unknown=0 if roles else 1,
++                    universe="roles declarados en roles/registry.json", declared=True)
+     return Result(GATE_ID, TITLE, PASS if not findings else FAIL, severity=MEDIUM,
+                   threshold=THRESHOLD,
+                   measure=f"{len(roles)} roles · {len(findings)} problemas",
+-                  findings=findings, observations=observations)
++                  findings=findings, observations=observations, scope=alcance)

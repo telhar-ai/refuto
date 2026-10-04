@@ -1,0 +1,36 @@
+# Ocurrencias históricas declaradas, una a una, con su huella completa.
+#
+# Qué es una huella aquí: `<commit>:<fichero>:<regla>:<línea>`. No es un patrón, no es un
+# fichero entero y no es una regla desactivada. Es EXACTAMENTE una aparición, en exactamente
+# un commit. Cualquier hallazgo nuevo —incluido uno del mismo fichero en otra línea— sigue
+# parando la integración.
+#
+# Por qué hace falta, medido el 2026-09-23
+# ----------------------------------------
+# `G-SECURITY` ejecuta `gitleaks detect`, que escanea el **historial de git**, no el árbol.
+# La cadena de abajo se corrigió en el árbol de trabajo —se parte por concatenación, como ya
+# hacía `tests/fixtures/__init__.py` y por el mismo motivo— pero el commit publicado la
+# conserva y la conservará siempre. Reescribir el historial para esconderla sería peor que la
+# cadena: se perdería la constancia de que estuvo ahí.
+#
+#     gitleaks dir      .   →  0 hallazgos   (el árbol está limpio)
+#     gitleaks detect -s .  →  1 hallazgo    (el historial guarda la versión vieja)
+#
+# Qué NO es esto
+# --------------
+# No es la solución. La solución es que la puerta use `gitleaks dir`, que es el comando que
+# mira lo que hay en disco en vez del historial del repositorio que lo contenga. Medido:
+#
+#     gitleaks detect -s examples/espacio-minimo  →  1 hallazgo  ← del repositorio PADRE
+#     gitleaks dir      examples/espacio-minimo   →  0 hallazgos ← sólo el espacio
+#
+# Es decir: verificar cualquier espacio anidado dentro de un repositorio git reporta los
+# hallazgos del padre como si fueran suyos. Eso es una fuga de ámbito, de la misma familia
+# que la que tenía G-MCP con `$HOME`. El parche exacto está en
+# `docs/remediation/gitleaks-escanea-el-historial-del-padre.md`; `gates/**` está protegido
+# por política, así que lo aplica una persona.
+#
+# La cadena declarada nunca fue una credencial: es el literal de una prueba adversarial que
+# comprueba que una escritura con FORMA de secreto se manda a una persona en vez de
+# permitirse. Se puede leer entera en `tests/adversarial/test_attacks.py`.
+e28249c2677a446dee7825a5baccd045f0512441:tests/adversarial/test_attacks.py:generic-api-key:149

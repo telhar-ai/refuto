@@ -1,0 +1,10 @@
+{
+  "schema": "harness.policy/v1",
+  "name": "example-org",
+  "version": "1",
+  "extends": "../../base/.harness/policy.json",
+  "_que_es": "CAPA 2 — el cliente. Sólo declara lo SUYO: la frontera de datos y las órdenes que su contrato prohíbe. Lo que calla lo hereda, y no puede retirarlo.",
+  "protected_paths": ["insumos-del-cliente/**", "contratos/**"],
+  "command_deny": ["terraform apply:*"],
+  "default_modes": {"claude": "ask"}
+}

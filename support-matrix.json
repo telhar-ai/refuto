@@ -1,0 +1,318 @@
+{
+  "schema": "harness.matrix/v1",
+  "generated_at": "2026-08-30T15:58:51.008+00:00",
+  "agents": {
+    "claude": {
+      "level": "FUNCTIONAL",
+      "version": "2.1.251",
+      "protocol": {
+        "family": "claude-stream-json",
+        "version": "2.1.251"
+      },
+      "stopped_because": "VERIFIED no se intentó: requiere --deep (gasta créditos)",
+      "signature": "VALID"
+    },
+    "codex": {
+      "level": "FUNCTIONAL",
+      "version": "0.151.0",
+      "protocol": {
+        "family": "codex-mcp-server",
+        "version": "0.151.0"
+      },
+      "stopped_because": "VERIFIED no se intentó: requiere --deep (gasta créditos)",
+      "signature": "VALID"
+    },
+    "gemini": {
+      "level": "FUNCTIONAL",
+      "version": "0.55.1",
+      "protocol": {
+        "family": "acp",
+        "version": 1
+      },
+      "stopped_because": "VERIFIED no se intentó: requiere --deep (gasta créditos)",
+      "signature": "UNSIGNED"
+    },
+    "kiro": {
+      "level": "FUNCTIONAL",
+      "version": "2.20.1",
+      "protocol": {
+        "family": "acp",
+        "version": 1
+      },
+      "stopped_because": "VERIFIED no se intentó: requiere --deep (gasta créditos)",
+      "signature": "VALID"
+    },
+    "opencode": {
+      "level": "FUNCTIONAL",
+      "version": "1.2.27",
+      "protocol": {
+        "family": "acp",
+        "version": 1
+      },
+      "stopped_because": "VERIFIED no se intentó: requiere --deep (gasta créditos)",
+      "signature": "INVALID"
+    }
+  },
+  "features": {
+    "handshake": {
+      "label": "Handshake estructurado",
+      "why": "¿Se puede saber qué sabe hacer sin gastar créditos?",
+      "by_agent": {
+        "claude": {
+          "value": "COMPROBADO",
+          "note": "claude-stream-json"
+        },
+        "codex": {
+          "value": "COMPROBADO",
+          "note": "codex-mcp-server"
+        },
+        "gemini": {
+          "value": "COMPROBADO",
+          "note": "acp"
+        },
+        "kiro": {
+          "value": "COMPROBADO",
+          "note": "acp"
+        },
+        "opencode": {
+          "value": "COMPROBADO",
+          "note": "acp"
+        }
+      }
+    },
+    "acp": {
+      "label": "ACP v1",
+      "why": "Protocolo cliente↔agente, abierto",
+      "by_agent": {
+        "claude": {
+          "value": "NO",
+          "note": "no aparece en su CLI"
+        },
+        "codex": {
+          "value": "NO",
+          "note": "no aparece en su CLI"
+        },
+        "gemini": {
+          "value": "NATIVO",
+          "note": "initialize respondió v1"
+        },
+        "kiro": {
+          "value": "NATIVO",
+          "note": "initialize respondió v1"
+        },
+        "opencode": {
+          "value": "NATIVO",
+          "note": "initialize respondió v1"
+        }
+      }
+    },
+    "mcp": {
+      "label": "MCP",
+      "why": "Protocolo de herramientas",
+      "by_agent": {
+        "claude": {
+          "value": "NATIVO",
+          "note": "0 servidores en la sesión sondeada"
+        },
+        "codex": {
+          "value": "NATIVO",
+          "note": "0 servidores en la sesión sondeada"
+        },
+        "gemini": {
+          "value": "NATIVO",
+          "note": "transportes: http, sse"
+        },
+        "kiro": {
+          "value": "NATIVO",
+          "note": "transportes: http"
+        },
+        "opencode": {
+          "value": "NATIVO",
+          "note": "transportes: http, sse"
+        }
+      }
+    },
+    "sessions": {
+      "label": "Sesiones",
+      "why": "Estado conversacional gestionado por el agente",
+      "by_agent": {
+        "claude": {
+          "value": "?",
+          "note": ""
+        },
+        "codex": {
+          "value": "?",
+          "note": ""
+        },
+        "gemini": {
+          "value": "NATIVO",
+          "note": "loadSession"
+        },
+        "kiro": {
+          "value": "NATIVO",
+          "note": "loadSession"
+        },
+        "opencode": {
+          "value": "NATIVO",
+          "note": "fork, list, resume"
+        }
+      }
+    },
+    "resume": {
+      "label": "Reanudar",
+      "why": "Continuidad entre fases",
+      "by_agent": {
+        "claude": {
+          "value": "DECLARADO",
+          "note": "bandera de reanudación en su CLI"
+        },
+        "codex": {
+          "value": "DECLARADO",
+          "note": "bandera de reanudación en su CLI"
+        },
+        "gemini": {
+          "value": "NATIVO",
+          "note": "loadSession en el handshake"
+        },
+        "kiro": {
+          "value": "NATIVO",
+          "note": "loadSession en el handshake"
+        },
+        "opencode": {
+          "value": "NATIVO",
+          "note": "loadSession en el handshake"
+        }
+      }
+    },
+    "skills": {
+      "label": "SKILL.md",
+      "why": "Procedimientos cargados por descripción",
+      "by_agent": {
+        "claude": {
+          "value": "NATIVO",
+          "note": "44 comandos en la sesión sondeada"
+        },
+        "codex": {
+          "value": "?",
+          "note": "no verificado en esta máquina en 0.151.0"
+        },
+        "gemini": {
+          "value": "DECLARADO",
+          "note": "SKILL.md documentado en su CLI"
+        },
+        "kiro": {
+          "value": "DECLARADO",
+          "note": "SKILL.md documentado en su CLI"
+        },
+        "opencode": {
+          "value": "?",
+          "note": "no verificado en esta máquina"
+        }
+      }
+    },
+    "policy": {
+      "label": "Política compilable",
+      "why": "La política canónica se traduce a su vocabulario",
+      "by_agent": {
+        "claude": {
+          "value": "ADAPTER",
+          "note": "compilación completa"
+        },
+        "codex": {
+          "value": "ADAPTER",
+          "note": "3 regla(s) no aplicables"
+        },
+        "gemini": {
+          "value": "ADAPTER",
+          "note": "1 regla(s) no aplicables"
+        },
+        "kiro": {
+          "value": "ADAPTER",
+          "note": "compilación completa"
+        },
+        "opencode": {
+          "value": "ADAPTER",
+          "note": "1 regla(s) no aplicables"
+        }
+      }
+    },
+    "budget": {
+      "label": "Presupuesto en $",
+      "why": "Tope de gasto por ejecución",
+      "by_agent": {
+        "claude": {
+          "value": "NATIVO",
+          "note": "--max-budget-usd"
+        },
+        "codex": {
+          "value": "NO",
+          "note": "no hay bandera de presupuesto en 0.151.0"
+        },
+        "gemini": {
+          "value": "NO",
+          "note": ""
+        },
+        "kiro": {
+          "value": "NO",
+          "note": "no hay bandera de presupuesto en 2.20.0"
+        },
+        "opencode": {
+          "value": "?",
+          "note": ""
+        }
+      }
+    },
+    "sandbox": {
+      "label": "Aislamiento",
+      "why": "Ejecución acotada",
+      "by_agent": {
+        "claude": {
+          "value": "?",
+          "note": ""
+        },
+        "codex": {
+          "value": "NATIVO",
+          "note": "--sandbox (seatbelt) · `codex sandbox` ejecuta órdenes acotadas"
+        },
+        "gemini": {
+          "value": "NATIVO",
+          "note": "--sandbox"
+        },
+        "kiro": {
+          "value": "NATIVO",
+          "note": "--cloud"
+        },
+        "opencode": {
+          "value": "?",
+          "note": ""
+        }
+      }
+    },
+    "evidence": {
+      "label": "Evidencia normalizada",
+      "why": "Sus eventos entran al diario del harness",
+      "by_agent": {
+        "claude": {
+          "value": "ADAPTER",
+          "note": "eventos normalizados por el adapter"
+        },
+        "codex": {
+          "value": "ADAPTER",
+          "note": "eventos normalizados por el adapter"
+        },
+        "gemini": {
+          "value": "ADAPTER",
+          "note": "eventos normalizados por el adapter"
+        },
+        "kiro": {
+          "value": "ADAPTER",
+          "note": "eventos normalizados por el adapter"
+        },
+        "opencode": {
+          "value": "ADAPTER",
+          "note": "eventos normalizados por el adapter"
+        }
+      }
+    }
+  }
+}

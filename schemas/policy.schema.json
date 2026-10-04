@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:refuto:schema:policy:v1",
+  "title": "Política de refuto",
+  "description": "La política canónica de un espacio: un documento, N compilaciones. Puede ser raíz o declarar `extends` y refinar a su padre en la cadena refuto → cliente → proyecto. El refinamiento es monotónico: un hijo añade y endurece, nunca retira ni ensancha. Ver docs/architecture/HERENCIA-REFUTO-CLIENTE-PROYECTO.md y core/refinement.py.",
+  "type": "object",
+  "required": [
+    "schema"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "harness.policy/v1"
+    },
+    "version": {
+      "type": "string",
+      "description": "Revisión de quien escribe ESTE documento. No se hereda: es un metadato, no una restricción."
+    },
+    "name": {
+      "type": "string",
+      "description": "Cómo se llama esta capa. Viaja en la identidad, así que un evento del diario puede decir bajo qué política de cliente se decidió. Sin él la identidad dice «sin-nombre», que no es falso pero no sirve para auditar."
+    },
+    "extends": {
+      "type": "string",
+      "minLength": 1,
+      "description": "RUTA al documento padre, relativa al directorio de ESTE fichero, o absoluta. Deliberadamente no es un nombre contra el censo: resolver por nombre exige decidir dónde vive la capa de cliente, y esa decisión no está tomada. Si el padre no existe o no se puede leer, NO se aplican los valores por omisión ni esta política a secas: se levanta `HerenciaIrresoluble` y el guardián deniega. Un espacio que dice heredar y corre sin su padre parece gobernado sin estarlo."
+    },
+    "extends_digest": {
+      "type": "string",
+      "description": "Digest del documento padre en el momento de anclar. Opcional y NO se escribe por omisión: anclado, cualquier cambio del padre deja de resolver hasta que alguien lo revise. Eso es lo correcto para una capa que no debe moverse sola, y demasiado rígido para una capa de cliente que evoluciona. Decídalo por capa, no por omisión."
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "ACUMULA por herencia: el efectivo es la UNIÓN con el padre. No hay sintaxis para retirar una ruta heredada, y no poder expresar la violación es más fuerte que detectarla."
+    },
+    "writable_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Excepciones a `protected_paths`, evaluadas ANTES que él. REDUCE por herencia: el efectivo es la INTERSECCIÓN. Un hijo puede cerrar agujeros del padre, nunca abrir otros."
+    },
+    "external_write_allow": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Lo único escribible fuera del espacio. Vacío significa: nada. REDUCE por herencia, por el mismo motivo que `writable_paths`."
+    },
+    "secret_read_deny": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Rutas cuya LECTURA se deniega. ACUMULA por herencia. Hasta el 2026-09-25 se aplicaba sólo en decide_write (escrituras) y en la capa compilada del agente (sobre Read); el guardián engancha Bash y no preguntaba por lecturas, así que `cat .env` salía allow. Ahora el canal de lectura sí se mira: leer una credencial es `ask` —un deny duro se rodea con `python3 -c`, que es opaco, y entonces el canal deja de mirarse— y la COMBINACIÓN lectura-de-credencial + escritura-fuera-del-espacio es `deny`."
+    },
+    "secret_env_deny": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Nombres de variable de ENTORNO con forma de credencial, con globs e insensible a mayúsculas. ACUMULA por herencia: marcar de más cuesta una consulta a una persona, marcar de menos cuesta el secreto. Se compara el NOMBRE, nunca el valor — mirar el valor de cada variable para decidir si es un secreto obligaría a leer todos los secretos para protegerlos. Se consulta en el MISMO canal de lectura que secret_read_deny, porque `printenv MI_SERVICIO_API_KEY` y `cat .env` son la misma pregunta por dos caminos. Medido el 2026-09-25 en una sesión real: 70 variables y 7 con forma de credencial, todas legibles, mientras .env estaba protegido. La lista de fábrica está CURADA: un sondeo con SESSION|AUTH|KEY marcaba SSH_AUTH_SOCK —que es la ruta de un socket— y HARNESS_SESSION, que es de refuto; un detector que marca lo normal enseña a ignorarlo."
+    },
+    "command_deny": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Patrones de orden que se rechazan. ACUMULA por herencia."
+    },
+    "command_ask": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Patrones de orden que decide una persona. ACUMULA por herencia: retirar una consulta convertiría en automática una decisión que alguien reservó a una persona."
+    },
+    "block_secret_content": {
+      "type": "boolean",
+      "description": "Bloquea la escritura cuyo contenido tenga forma de credencial. ENDURECE por herencia: `true` del padre no se puede poner a `false`."
+    },
+    "network_rules": {
+      "type": "array",
+      "description": "ACUMULA por herencia. Sin `items` a propósito: hoy está vacío en todas las políticas reales porque ninguno de los cinco runtimes ofrece allowlist de dominios verificada. Declarar aquí una forma que nadie produce sería fijar un contrato sin un solo caso que lo pruebe."
+    },
+    "default_modes": {
+      "type": "object",
+      "description": "Modo de interacción por runtime. MODO por herencia: un hijo puede endurecerlo, nunca ablandarlo. Se clasificó como PROPIO —«no es seguridad sino interacción»— y se falsó midiendo: adapters/claude.py lo compila a permissions.defaultMode, así que un hijo podía pasar de `ask` a `bypassPermissions`. El orden de permisividad es ask < default < acceptEdits < bypassPermissions; un modo fuera de ese orden (`unknown`, `declared-in-agent`) exige igualdad, porque sin orden no hay demostración. Cada runtime conserva su vocabulario: no se homogeneiza.",
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "privilege_grants": {
+      "type": "array",
+      "description": "Excepciones NOMBRADAS en el canal de órdenes: el análogo de writable_paths, que es una excepción nombrada a protected_paths. Se evalúan ANTES de command_deny —una excepción evaluada después nunca ganaría— y su monotonía es REDUCE_LISTA: el hijo sólo puede retirar concesiones enteras, nunca añadir ni modificar una que conserva. Lo que impide que sea un agujero: la concesión vive en .harness/policy.json, que esta misma política protege, así que un agente no puede concederse privilegio a sí mismo — `human_approval` no es un campo que alguien deba comprobar, es una propiedad del sitio donde la concesión está escrita. Y `effects: read-only` se VERIFICA contra Ê: si la orden deriva alguna escritura, o si es opaca, la concesión no aplica. Una concesión mal formada no concede nada. Ver core/grants.py y ADR-0016.",
+      "items": { "$ref": "#/$defs/grant" }
+    },
+    "role_capabilities": {
+      "type": "object",
+      "description": "El SUJETO del monitor de referencia: restricciones extra por rol, sobre las que ya declara roles/registry.json. Hasta el 2026-09-25 el guardián decidía sobre (objeto, operación) y ningún campo del hecho normalizado era el sujeto, así que todo agente en todo rol tenía autoridad idéntica. ACUMULA_MAPA por herencia: el efectivo es la unión clave a clave, de modo que un espacio puede restringir más un rol y NO tiene sintaxis para retirarle una restricción — no poder expresar la relajación es más fuerte que detectarla. Se expresan en negativo (`no_shell`) precisamente para que la unión sea la operación correcta. Los nombres válidos son los de core.capabilities.CONOCIDAS: las que el guardián aplica más las declaradas no observables con su motivo. Uno inventado no se ignora en silencio — G-ROLES lo pone en rojo, porque una capacidad que nadie aplica es el defecto que ese gate existe para impedir.",
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "grant": {
+      "type": "object",
+      "required": ["id", "roles", "hosts", "commands", "expires"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nombre de la concesión. Obligatorio: una concesión que no se puede nombrar no se puede auditar ni retirar."
+        },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Roles a los que aplica. `[\"*\"]` significa cualquiera, y escribir el comodín es el punto: una lista vacía NO concede a todos, no concede a nadie. Un campo que concede todo por omisión concede por descuido."
+        },
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Máquinas donde aplica, contra `platform.node()`, con globs. `[\"*\"]` para cualquiera."
+        },
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Formas de orden que autoriza, con globs. Se comparan contra cada segmento de la cadena, no contra la cadena entera: encadenar no amplía la concesión."
+        },
+        "effects": {
+          "enum": ["read-only", "unrestricted"],
+          "description": "`read-only` se VERIFICA contra Ê: si la orden deriva alguna escritura, o si su efecto no se puede derivar (opaca), la concesión no aplica — no poder demostrar que no escribe no es haber demostrado que no escribe. `unrestricted` no se verifica, y se llama así y no «any» para que quien lo escriba lea que renuncia a la comprobación. Por omisión, `read-only`."
+        },
+        "human_approval": {
+          "enum": ["each-time", "once-per-grant"],
+          "description": "`once-per-grant`: la persona aprobó la clase al escribir la concesión → allow. `each-time`: aprueba cada instancia → ask. Por omisión el ESTRICTO (`each-time`): en una tabla de autorización, un campo ausente que significara «adelante» concede por descuido."
+        },
+        "expires": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Fecha ISO. Obligatoria: una autorización sin fecha se vuelve permanente por omisión, y las permanentes son las que nadie revisa. Pasada esa fecha la concesión no aplica."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Qué justifica la concesión: un ticket, un requisito, un incidente. No se comprueba que exista —refuto no conoce su rastreador— y viaja al diario y al motivo de la decisión, que es donde alguien lo va a leer al preguntar por qué se autorizó."
+        }
+      }
+    }
+  }
+}

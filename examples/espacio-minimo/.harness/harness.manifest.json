@@ -1,0 +1,39 @@
+{
+  "schema": "harness.manifest/v1",
+  "_que_es": "Lo que este espacio declara necesitar. No declara agentes ni origenes a proposito: asi varias puertas salen BLOCKED, que es el estado correcto de un espacio recien creado. Ni verde (no ha demostrado nada) ni rojo (no ha incumplido nada).",
+  "harness": {
+    "version": "0.1.0",
+    "min_python": "3.10"
+  },
+  "workspace": {
+    "name": "espacio-minimo",
+    "profile": "minimal",
+    "description": "El espacio mas pequeno que el harness puede gobernar."
+  },
+  "agents": {},
+  "gates": [
+    "G-AGENT",
+    "G-FLEET",
+    "G-HUMAN",
+    "G-LOCK",
+    "G-MANIFEST",
+    "G-MCP",
+    "G-POLICY",
+    "G-PR",
+    "G-ROLES",
+    "G-SDD",
+    "G-SECURITY",
+    "G-SKILL",
+    "G-TRACE"
+  ],
+  "skills": {
+    "roots": [
+      ".claude/skills",
+      ".kiro/skills"
+    ],
+    "require_name_matches_directory": true
+  },
+  "mcp": {
+    "protocol_version": "2026-07-28"
+  }
+}

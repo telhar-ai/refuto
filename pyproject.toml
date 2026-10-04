@@ -1,0 +1,82 @@
+# Metadatos del proyecto. `refuto` se clona y se ejecuta: `python3 refuto.py` o `bin/refuto`.
+#
+# NO declara `[project.scripts]` a propósito. Medido el 2026-09-22 en un entorno virtual
+# limpio: `pip install --no-deps .` instala sin error, y el `refuto` resultante NO encuentra
+# `schemas/` ni `roles/` —`core/schema.py` y `core/roles.py` los resuelven junto al paquete—,
+# así que G-MANIFEST y G-HUMAN quedan en NOT_EXECUTABLE y G-ROLES en FAIL. Un binario que
+# arranca y falla al validar es peor que uno que no existe: prometerlo aquí sería declarar
+# soportado algo que está en NOT_RUN. Ver docs/estado-del-proyecto.md.
+#
+# Sin dependencias, y así debe seguir: si aparece una, deja de ser cierto que este programa
+# corre en cualquier máquina con Python y nada más.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "refuto"
+dynamic = ["version"]
+description = "Gobierno de agentes de código: una sola política, aplicada en el gancho de cada agente, con evidencia encadenada."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Oscar Valois" }]
+keywords = ["ai-agents", "governance", "policy", "evidence", "claude-code", "antigravity", "kiro", "codex"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[tool.setuptools]
+py-modules = ["refuto"]
+packages = ["core", "gates", "adapters"]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.md"]
+
+# ── análisis estático ────────────────────────────────────────────────────────────────
+#
+# El criterio vive AQUÍ y no sólo en el preflight, para que `ruff check` a secas —lo que va a
+# teclear quien contribuya— dé exactamente el mismo veredicto que la puerta. Un linter con dos
+# criterios es dos linters.
+#
+# Por qué este conjunto y no «todo»
+# ---------------------------------
+# Medido el 2026-09-25 sobre este árbol, con `ruff 0.16.9`:
+#
+#     F, E9                  0      ← defectos reales: nombres indefinidos, imports sin usar…
+#     F, E4, E7, E9         45      ← +22 `E702` (punto y coma) y +19 `E741` (nombre `l`)
+#     F, E, W            3.890      ← casi todo `E501`: el árbol no cumple 100 columnas
+#     F, E4, E7, E9, S     145      ← `S` marca `subprocess`, que es el TRABAJO de refuto
+#     F, E4, E7, E9, UP    176
+#
+# Se elige el conjunto que está **verde de verdad** y señala defectos, no estilo. Un criterio
+# que nace en rojo con 3.890 hallazgos no se arregla: se desactiva, y entonces no protege de
+# nada — la misma lección que `_partir` con las comillas y `dd:*` con el markdown.
+#
+# `E702` y `E741` se quedan fuera a propósito: `t_o.start(); t_e.start()` y los nombres cortos
+# en comprensiones son el estilo compacto deliberado de este código, no un descuido. Declarar
+# que molestan y no arreglarlos sería peor que no declararlos.
+#
+# `B904` y `B905` sí entran aunque `B` completo no: el primero pierde el encadenado de
+# excepciones y el segundo trunca en silencio un `zip` desparejado. Los dos que había se
+# arreglaron el 2026-09-25; entran para que no vuelvan.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["experimental", "docs"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B904", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+# Las pruebas importan nombres para comprobar que EXISTEN, que es una aserción y no un uso.
+"tests/**" = ["F401"]

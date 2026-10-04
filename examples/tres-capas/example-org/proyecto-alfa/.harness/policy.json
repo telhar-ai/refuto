@@ -1,0 +1,8 @@
+{
+  "schema": "harness.policy/v1",
+  "name": "proyecto-alfa",
+  "version": "1",
+  "extends": "../../.harness/policy.json",
+  "_que_es": "CAPA 3 — el proyecto. Endurece lo que le toca. Un proyecto sin nada propio que declarar NO necesita este fichero: basta con que su repositorio use el guardián del cliente.",
+  "protected_paths": ["infra/**"]
+}
