@@ -40,8 +40,15 @@ class TestEnganche(unittest.TestCase):
         with Workspace("wire-twice") as ws:
             kiro_agent(ws, "a")
             wire_kiro_agents(ws.root, harness_root=HARNESS)
+            # La lista creció el 2026-10-04: `wire_*` declara ahora también el LANZADOR
+            # (`.harness/bin/guard`). Antes lo escribía y lo callaba — incluso en
+            # `--dry-run`. Se afirma sobre el gancho por su RUTA y no por la posición en
+            # la lista, que es lo que hacía frágil la aserción anterior.
             second = wire_kiro_agents(ws.root, harness_root=HARNESS)
-            self.assertEqual([r.action for r in second], ["already"])
+            acciones = {r.path: r.action for r in second}
+            self.assertEqual("already", acciones[".kiro/agents/a.json"])
+            self.assertEqual("already", acciones[".harness/bin/guard"],
+                             "el lanzador ya apuntaba bien: no debía reescribirse")
             doc = json.loads((ws.root / ".kiro/agents/a.json").read_text())
             self.assertEqual(len(doc["hooks"]["preToolUse"]), 1, "el gancho se duplicó")
 
@@ -75,9 +82,19 @@ class TestEnganche(unittest.TestCase):
     def test_un_agente_ilegible_se_declara_no_se_salta(self):
         with Workspace("wire-bad") as ws:
             ws.file(".kiro/agents/roto.json", "{ no json")
+            # La lista creció el 2026-10-04: `wire_*` declara ahora también el LANZADOR
+            # (`.harness/bin/guard`). Antes lo escribía y lo callaba — incluso en
+            # `--dry-run`. Se afirma sobre el gancho por su RUTA y no por la posición en
+            # la lista, que es lo que hacía frágil la aserción anterior.
             results = wire_kiro_agents(ws.root, harness_root=HARNESS)
-            self.assertEqual([r.action for r in results], ["skipped"])
-            self.assertIn("ilegible", results[0].detail)
+            # Se busca por sufijo y no por clave exacta: la rama `skipped` reporta la ruta
+            # ABSOLUTA mientras el resto de `wire_*` reporta la relativa al espacio.
+            # Inconsistencia preexistente del informe, no de la decisión; se deja anotada aquí
+            # en vez de absorberla en silencio.
+            ilegible = [r for r in results if r.path.endswith("roto.json")]
+            self.assertEqual(1, len(ilegible), f"no se declaró el agente ilegible: {results}")
+            self.assertEqual("skipped", ilegible[0].action)
+            self.assertIn("ilegible", ilegible[0].detail)
 
 
 class TestEngancheEnRepositorios(unittest.TestCase):

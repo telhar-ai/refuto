@@ -65,8 +65,39 @@ def imported_by(module: str) -> list:
     return sorted(set(out))
 
 
+def _ignorados_por_git() -> set:
+    """Rutas que git ignora. Un fichero ignorado no es un módulo del producto.
+
+    Por qué esta exclusión y no una lista de carpetas
+    ------------------------------------------------
+    Este control recorre el ÁRBOL DE TRABAJO (`ROOT.rglob("*.py")`), así que ve cualquier cosa
+    que alguien deje en el directorio: un borrador, una herramienta de un solo uso, un guion de
+    remediación. Nada de eso se publica —está en `.gitignore`— y por tanto nada de eso puede
+    estar «conectado» al grafo de módulos: exigirle un `import` es medir la conexión con la regla
+    equivocada, igual que exigírselo a una puerta que se carga por `importlib`.
+
+    Medido el 2026-10-04: un guion de remediación bajo `artifacts/harness/`, ignorado por git,
+    dejaba `check_wiring` en rojo y con él el `pre-push` entero. El control tenía razón en su
+    regla y se estaba equivocando de SUJETO.
+
+    No debilita nada: en CI el árbol es un `checkout` limpio, sin ficheros ignorados, así que el
+    conjunto que esto excluye allí es **vacío** y el control mide exactamente lo que medía. Y si
+    git no está disponible, no se excluye nada — ante la duda, se comprueba más.
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--others", "--ignored",
+                            "--exclude-standard", "-z"],
+                           capture_output=True, timeout=60, **TEXT_IO)  # nosec B603 B607
+        if r.returncode != 0:
+            return set()
+        return {x for x in (r.stdout or "").split("\0") if x}
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+
 def check_modules() -> list:
     problemas = []
+    ignorados = _ignorados_por_git()
     for path in sorted(ROOT.rglob("*.py")):
         # `as_posix()`: el resto del guion compara con '/' y convierte la ruta a nombre de
         # modulo con replace('/', '.'). Con separadores de Windows no casaba NADA, y este
@@ -74,6 +105,8 @@ def check_modules() -> list:
         # por ser tantos, se aprenden a ignorar.
         rel = path.relative_to(ROOT).as_posix()
         if ".git" in rel or "__pycache__" in rel or rel.startswith("tests/"):
+            continue
+        if rel in ignorados:          # git lo ignora: no es un módulo del producto
             continue
         if rel in ENTRYPOINTS or rel.endswith("__init__.py"):
             continue

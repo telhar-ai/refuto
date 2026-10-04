@@ -20,6 +20,7 @@ Reglas de este módulo, y las tres existen por lo mismo:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,10 @@ MARK = "harness-guard"
 #: Un chequeo que no comprueba lo que cree es peor que no tenerlo.
 GUARD_MODULE = "core.guard"
 GUARD_LAUNCHER = ".harness/bin/guard"
+
+#: Lo que `_instalar_lanzador` reporta como ruta tocada. Es el mismo fichero que
+#: `GUARD_LAUNCHER`, nombrado aparte para que la salida del seco sea legible.
+BIN_LANZADOR = ".harness/bin/guard"
 
 #: Las herramientas de Claude Code sobre las que corre el guardián.
 #:
@@ -150,6 +155,62 @@ class WireResult:
     detail: str = ""
 
 
+def _instalar_lanzador(workspace: Path, harness_root: Path, *, runtime: str,
+                       dry_run: bool, solo_si_falta: bool = False) -> list:
+    """Materializa el lanzador, y en seco NO lo materializa: lo DECLARA.
+
+    El defecto que esto arregla, medido el 2026-10-04
+    ------------------------------------------------
+    `launcher.install` se llamaba antes de cualquier comprobación de `dry_run`, en los tres
+    `wire_*`. Resultado: `refuto policy wire --dry-run` **escribía**
+    `.harness/bin/{guard,guard.cmd,installed.json}` y la salida sólo hablaba de
+    `.claude/settings.local.json`. Se descubrió al intentar una simulación sobre dos espacios y
+    comprobar después que su lanzador había cambiado de puntero.
+
+    Una simulación que escribe es peor que no tener simulación: es el único modo en que alguien
+    prueba un cambio en producción creyendo que no lo está aplicando. Y el error contrario
+    —callar el efecto— también cuenta: el seco declara la acción del lanzador en vez de omitirla,
+    porque una lista que no la menciona se lee como una lista completa.
+    """
+    ya = launcher.is_installed(workspace)
+    if solo_si_falta and ya:
+        return []
+    al_dia = _lanzador_al_dia(workspace, harness_root)
+    if al_dia:
+        return [WireResult(BIN_LANZADOR, "already", f"apunta a {harness_root}")]
+    if dry_run:
+        return [WireResult(BIN_LANZADOR, "upgraded" if ya else "wired",
+                           f"(simulación) apuntaría a {harness_root}")]
+    launcher.install(workspace, harness_home=harness_root, runtime=runtime)
+    return [WireResult(BIN_LANZADOR, "upgraded" if ya else "wired",
+                       f"{'reapuntado' if ya else 'apunta'} a {harness_root}")]
+
+
+def _lanzador_al_dia(workspace: Path, harness_root: Path) -> bool:
+    """¿El lanzador ya apunta donde debe? Entonces no se reescribe.
+
+    No se compara byte a byte: `installed.json` lleva `installed_at`, así que una comparación
+    exacta nunca coincidiría y el lanzador se reescribiría en cada llamada — subiendo su `mtime`
+    y su marca de instalación sin que nada hubiera cambiado. Se compara lo que DECIDE algo: el
+    puntero al motor, en el guion y en el metadato, y que estén los tres ficheros.
+    """
+    d = workspace / ".harness" / "bin"
+    guion, meta = d / launcher.native_name(), d / "installed.json"
+    if not (guion.is_file() and meta.is_file()):
+        return False
+    try:
+        anotado = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    esperado = str(Path(os.path.abspath(str(harness_root))))
+    if anotado.get("harness_home") != esperado:
+        return False
+    try:
+        return f'HARNESS_HOME="{esperado}"' in guion.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
 def _backup(workspace: Path, path: Path) -> Path:
     dest = workspace / ".harness" / "backup" / path.relative_to(workspace)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -170,7 +231,7 @@ def wire_kiro_agents(workspace: Path, *, harness_root: Path, dry_run: bool = Fal
     if not agents_dir.is_dir():
         return [WireResult(str(agents_dir), "skipped", "no hay agentes de Kiro en este espacio")]
 
-    launcher.install(workspace, harness_home=harness_root, runtime="kiro")
+    out += _instalar_lanzador(workspace, harness_root, runtime="kiro", dry_run=dry_run)
     command = launcher.hook_command(workspace, runtime="kiro")
     for path in sorted(agents_dir.glob("*.json")):
         try:
@@ -319,7 +380,7 @@ def wire_claude(workspace: Path, *, harness_root: Path, dry_run: bool = False) -
     """
     out: list = []
     path = workspace / ".claude" / "settings.local.json"
-    launcher.install(workspace, harness_home=harness_root, runtime="claude")
+    out += _instalar_lanzador(workspace, harness_root, runtime="claude", dry_run=dry_run)
     command = launcher.hook_command(workspace, runtime="claude")
 
     doc: dict = {}
@@ -342,7 +403,12 @@ def wire_claude(workspace: Path, *, harness_root: Path, dry_run: bool = False) -
                   and [h.get("command") for h in ses_previos[0].get("hooks", [])] == [ROOT_WARN_CMD])
     if (previos and all(_uses_launcher(h) and _matcher_al_dia(e) for e, h in previos)
             and ses_al_dia and post_al_dia):
-        return [WireResult(str(path.relative_to(workspace)), "already")]
+        # `out` entero, no sólo esta línea. El gancho puede estar `already` y el LANZADOR
+        # haberse reapuntado en la misma llamada: medido el 2026-10-04 cableando ocho espacios
+        # instalados, donde `installed.json` pasó a otro motor y la salida sólo decía
+        # «already .claude/settings.local.json». El efecto ocurría y el informe lo callaba, que
+        # es la misma clase de defecto que una simulación que escribe.
+        return out + [WireResult(str(path.relative_to(workspace)), "already")]
     accion = "upgraded" if previos else "wired"
     for e in pre:
         e["hooks"] = [h for h in e.get("hooks", []) if not _is_guard_hook(h)]
@@ -371,7 +437,10 @@ def wire_claude(workspace: Path, *, harness_root: Path, dry_run: bool = False) -
         "_generado": f"{MARK}: avisa si la sesión se abrió como root, fuera del lanzador.",
     })
     if dry_run:
-        return [WireResult(str(path.relative_to(workspace)), accion, "(simulación)")]
+        # `out` ya trae la acción del lanzador: devolverlo entero es la otra mitad del arreglo
+        # del 2026-10-04. Descartarlo hacía que el seco callara un efecto que el real sí tiene,
+        # y una lista que omite un fichero se lee como una lista completa.
+        return out + [WireResult(str(path.relative_to(workspace)), accion, "(simulación)")]
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         _backup(workspace, path)
@@ -433,9 +502,9 @@ def wire_antigravity(workspace: Path, *, harness_root: Path, dry_run: bool = Fal
     por su raíz. El fichero es un objeto de ganchos con nombre; se reemplaza SÓLO el nuestro.
     """
     path = workspace / ".agents" / "hooks.json"
-    if not launcher.is_installed(workspace):
-        # El lanzador es común a todos los runtimes; su runtime por omisión no se toca aquí.
-        launcher.install(workspace, harness_home=harness_root, runtime="claude")
+    # El lanzador es común a todos los runtimes; su runtime por omisión no se toca aquí.
+    previos = _instalar_lanzador(workspace, harness_root, runtime="claude", dry_run=dry_run,
+                                 solo_si_falta=True)
     command = launcher.hook_command(workspace, runtime="antigravity")
 
     doc: dict = {}
@@ -458,7 +527,7 @@ def wire_antigravity(workspace: Path, *, harness_root: Path, dry_run: bool = Fal
     accion = "upgraded" if ANTIGRAVITY_HOOK in doc else "wired"
     doc[ANTIGRAVITY_HOOK] = nuevo
     if dry_run:
-        return [WireResult(rel, accion, "(simulación)")]
+        return previos + [WireResult(rel, accion, "(simulación)")]
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         _backup(workspace, path)

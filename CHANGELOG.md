@@ -10,6 +10,58 @@ histórica no las conservó, se dice.
 
 ---
 
+## 0.7.3 — *sin publicar* · `--dry-run` escribía, y el informe callaba lo que escribía
+
+Encontrado el **2026-10-04** por sorpresa, no por una prueba: intentando una SIMULACIÓN de
+`refuto policy wire` sobre dos espacios instalados y comprobando después que su lanzador había
+cambiado de puntero.
+
+**El defecto.** `launcher.install` se llamaba antes de cualquier comprobación de `dry_run`, en los
+tres `wire_*`. Así que `policy wire --dry-run` escribía
+`.harness/bin/{guard,guard.cmd,installed.json}` —reapuntando el guardián de un espacio a otro
+motor— y la salida sólo hablaba de `.claude/settings.local.json`.
+
+Una simulación que escribe es peor que no tener simulación: es el único modo en que alguien
+prueba un cambio en producción creyendo que no lo está aplicando.
+
+**El segundo defecto, que es el contrario y se descubrió al arreglar el primero.** Dos `return`
+tempranos —la rama `already` y la rama de seco— devolvían una lista NUEVA y descartaban la que ya
+traía la acción del lanzador. Medido cableando ocho espacios instalados: siete salieron
+«already .claude/settings.local.json» y en los siete el lanzador SÍ se reapuntó, con
+`installed.json` cambiando de motor en la misma llamada. El efecto ocurría y el informe lo
+callaba. Una lista que omite un fichero se lee como una lista completa — el mismo razonamiento
+por el que la enumeración de rutas protegidas del informe de sesión dejó de recortarse.
+
+**Y de paso, idempotencia real.** `_lanzador_al_dia` compara el PUNTERO al motor —en el guion y en
+el metadato— en vez de reinstalar siempre. No se compara byte a byte a propósito:
+`installed.json` lleva `installed_at`, así que una comparación exacta nunca coincidiría y el
+lanzador se reescribiría en cada llamada, subiendo su `mtime` sin que nada hubiera cambiado.
+Segunda ejecución seguida: `already` y `mtime` sin tocar.
+
+**Vigilante:** `tests/adversarial/test_seco_no_escribe.py` (9 pruebas). Hace una **huella sha256
+del árbol** antes y después y la compara, en vez de afirmar sobre la lista devuelta: la lista ya
+era correcta cuando el defecto existía —decía «simulación» mientras el disco cambiaba—, así que
+afirmar sobre ella es afirmar sobre lo que el código dice que hizo. Cubre las dos mitades: que el
+seco no escriba y que el seco **declare**, incluida la rama `already`, que es donde se escapó.
+
+Seis pruebas de `test_wire`, `test_launcher` y `test_session` afirmaban sobre la lista por
+POSICIÓN (`["already"]`). Ahora afirman por RUTA: la posición era lo que las hacía frágiles, y lo
+que permitía que el informe creciera sin que nadie lo notara.
+
+**Y un tercer defecto, del propio control que lo paró.** El `pre-push` quedó en rojo por
+`check_wiring`: recorre el ÁRBOL DE TRABAJO con `rglob("*.py")`, así que veía un guion de
+remediación bajo `artifacts/harness/` —ignorado por git, nunca publicado, para que lo ejecute una
+persona— y lo declaraba «nadie lo importa». El control tenía razón en su regla y se equivocaba de
+SUJETO: un fichero que git ignora no forma parte del grafo de módulos. Ahora los excluye, con
+`git ls-files --others --ignored`, y no debilita nada: en CI el árbol es un `checkout` limpio, el
+conjunto excluido es vacío y el control mide lo mismo que medía. Vigilado por
+`tests/unit/test_check_wiring_alcance.py`, que fija las dos mitades — lo ignorado se excluye, lo
+NO ignorado sigue delatándose — porque sin la segunda la exclusión sería una puerta trasera.
+
+Suite: **1453/1453** (`python3 refuto.py selftest`), frente a 1439/1439.
+
+---
+
 ## 0.7.2 — *sin publicar* · el gobierno se protege por autoridad, no por nombre de directorio
 
 Medido el **2026-10-03** en macOS 25.4 / Python 3.14.6, sobre **11 espacios gobernados** y
