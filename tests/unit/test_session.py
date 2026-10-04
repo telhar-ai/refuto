@@ -134,9 +134,15 @@ class TestEngancheDeClaude(unittest.TestCase):
 
     def test_es_idempotente(self):
         with Workspace("wc2") as ws:
+            # La lista creció el 2026-10-04: `wire_*` declara ahora también el LANZADOR
+            # (`.harness/bin/guard`). Antes lo escribía y lo callaba — incluso en
+            # `--dry-run`. Se afirma sobre el gancho por su RUTA y no por la posición en
+            # la lista, que es lo que hacía frágil la aserción anterior.
             wire_claude(ws.root, harness_root=HARNESS)
-            self.assertEqual([r.action for r in wire_claude(ws.root, harness_root=HARNESS)],
-                             ["already"])
+            acciones = {r.path: r.action
+                        for r in wire_claude(ws.root, harness_root=HARNESS)}
+            self.assertEqual("already", acciones[".claude/settings.local.json"])
+            self.assertEqual("already", acciones[".harness/bin/guard"])
 
     def test_preserva_la_configuracion_existente(self):
         """Pisar la configuración de alguien para instalar un control es empezar el control

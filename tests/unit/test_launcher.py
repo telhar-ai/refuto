@@ -146,8 +146,13 @@ class TestActualizacionDeGanchos(unittest.TestCase):
                 "name": "a", "tools": ["read"],
                 "hooks": {"preToolUse": [{"matcher": "fs_write",
                                           "command": "cd /viejo && python3 -m core.guard"}]}})
+            # La lista creció el 2026-10-04: `wire_*` declara ahora también el LANZADOR
+            # (`.harness/bin/guard`). Antes lo escribía y lo callaba — incluso en
+            # `--dry-run`. Se afirma sobre el gancho por su RUTA y no por la posición en
+            # la lista, que es lo que hacía frágil la aserción anterior.
             r = wire_kiro_agents(ws.root, harness_root=HARNESS)
-            self.assertEqual([x.action for x in r], ["upgraded"])
+            self.assertEqual("upgraded",
+                             {x.path: x.action for x in r}[".kiro/agents/a.json"])
             doc = json.loads((ws.root / ".kiro/agents/a.json").read_text(encoding="utf-8"))
             cmds = [h["command"] for h in doc["hooks"]["preToolUse"]]
             self.assertEqual(len(cmds), 1, "quedó el antiguo además del nuevo")
@@ -156,9 +161,15 @@ class TestActualizacionDeGanchos(unittest.TestCase):
     def test_un_gancho_ya_con_lanzador_no_se_toca(self):
         with Workspace("up2") as ws:
             ws.json(".kiro/agents/a.json", {"name": "a", "tools": ["read"]})
+            # La lista creció el 2026-10-04: `wire_*` declara ahora también el LANZADOR
+            # (`.harness/bin/guard`). Antes lo escribía y lo callaba — incluso en
+            # `--dry-run`. Se afirma sobre el gancho por su RUTA y no por la posición en
+            # la lista, que es lo que hacía frágil la aserción anterior.
             wire_kiro_agents(ws.root, harness_root=HARNESS)
-            self.assertEqual([x.action for x in wire_kiro_agents(ws.root, harness_root=HARNESS)],
-                             ["already"])
+            acciones = {x.path: x.action
+                        for x in wire_kiro_agents(ws.root, harness_root=HARNESS)}
+            self.assertEqual("already", acciones[".kiro/agents/a.json"])
+            self.assertEqual("already", acciones[".harness/bin/guard"])
 
     def test_claude_tambien_se_actualiza(self):
         with Workspace("up3") as ws:
@@ -166,8 +177,13 @@ class TestActualizacionDeGanchos(unittest.TestCase):
                 "hooks": {"PreToolUse": [{"matcher": "Write",
                                           "hooks": [{"type": "command",
                                                      "command": "cd /viejo && python3 -m core.guard"}]}]}})
+            # La lista creció el 2026-10-04: `wire_*` declara ahora también el LANZADOR
+            # (`.harness/bin/guard`). Antes lo escribía y lo callaba — incluso en
+            # `--dry-run`. Se afirma sobre el gancho por su RUTA y no por la posición en
+            # la lista, que es lo que hacía frágil la aserción anterior.
             r = wire_claude(ws.root, harness_root=HARNESS)
-            self.assertEqual([x.action for x in r], ["upgraded"])
+            self.assertEqual("upgraded",
+                             {x.path: x.action for x in r}[".claude/settings.local.json"])
             self.assertTrue(audit_claude(ws.root)["wired"])
             doc = json.loads((ws.root / ".claude/settings.local.json").read_text(encoding="utf-8"))
             cmds = [h["command"] for e in doc["hooks"]["PreToolUse"] for h in e["hooks"]]
