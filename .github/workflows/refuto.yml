@@ -217,6 +217,32 @@ jobs:
           echo "instalados, con checksum verificado:"
           gitleaks version; syft version | head -2; trivy --version | head -1
 
+      - name: Base de datos de trivy, antes de verificar
+        # El paso anterior instala el BINARIO de trivy, y eso no es lo mismo que poder
+        # escanear. `gates/g_security.py` invoca `trivy fs --skip-db-update` —correcto, porque
+        # `verify --offline` no debe tocar la red durante la verificación— y sin base de datos
+        # descargada eso aborta:
+        #
+        #     FATAL  init error: DB error: database error: --skip-db-update cannot be specified
+        #
+        # La puerta lo declara `NOT_EXECUTABLE`, que es lo correcto (un escáner que no corrió
+        # no aprueba: eso se arregló el 2026-09-23, cuando con la DB rota salía `PASS` sin
+        # haber escaneado nada), y el veredicto queda en rojo por una carencia del ejecutor.
+        #
+        # Medido el 2026-10-03: el trabajo pasaba en el portátil donde se escribió —la caché
+        # de `~/Library/Caches/trivy` estaba poblada de usos anteriores— y fallaba en el
+        # ejecutor, que arranca vacío. Es el modo de fallo que este repositorio nombra en su
+        # primera regla: cuando una medición sorprenda, sospecha del instrumento.
+        #
+        # Descargar aquí y no en la verificación mantiene las dos propiedades: la DB existe y
+        # `verify` sigue sin red. Comprobado en local con `TRIVY_CACHE_DIR` vacío: tras
+        # `--download-db-only`, `trivy fs --skip-db-update` da rc=0 y JSON válido.
+        run: |
+          set -euo pipefail
+          trivy fs --download-db-only --quiet
+          echo "base de datos de vulnerabilidades lista:"
+          trivy --version
+
       - name: Inicializar el espacio de ejemplo
         run: |
           set -euo pipefail
