@@ -39,6 +39,7 @@ from core.change import (
     DiffTamperDetectedError,
     InvalidAuthorizationSignatureError,
     PolicyTamperBlockedError,
+    ProtectedChangeError,
     ProtectedTargetRequiresAuthorizationError,
     ScopeReductionError,
     TargetTamperDetectedError,
@@ -394,6 +395,120 @@ class TestChangeGovernanceA01A15(unittest.TestCase):
         self.assertFalse(claim_res["lifecycle_admissibility"]["can_advance"])
         remediations = claim_res["lifecycle_admissibility"]["remediation_actions"]
         self.assertTrue(any("digest" in r.lower() for r in remediations))
+
+
+class TestA05FallaCerradoSinAlmacen(unittest.TestCase):
+    """A05 con el almacén de confianza AUSENTE. El hueco que la clase de arriba no veía.
+
+    Las 15 pruebas de `TestChangeGovernanceA01A15` escriben
+    `.harness/trusted_authorizers.json` en `setUp` y pasan un `trusted_keys` no vacío a `apply`.
+    Es decir: cubrían A05 en el caso «hay almacén» y **ningún** caso «no hay almacén», que es el
+    estado real de los 11 espacios medidos el 2026-10-03 — en ninguno existe el fichero.
+
+    En ese estado, `apply` decía `if trusted:` y se saltaba A05 entero. Medido de punta a punta
+    por el protocolo, con el almacén ausente:
+
+        propone  «agente»                 → propuesta creada
+        autoriza «revisor-humano»         → token EMITIDO (identidad inventada, par propio)
+        aplica   gates/g_colado.py        → *** APLICADO ***
+
+    y lo mismo con `verification/**` y `evidence/**`: un agente escribiendo su propio juez y su
+    propia evidencia con sólo inventarse un segundo nombre. A02 verificaba la firma y por eso no
+    se notaba — verifica contra la clave pública que el token TRAE, así que sin A05 demuestra que
+    el token no se alteró, no que lo firmara nadie.
+
+    A01 no lo para: compara dos cadenas (`author` vs `authorizer_id`) y las dos las elige quien
+    propone. Sólo `.harness/policy.json` se salvaba, por A03.
+    """
+
+    def setUp(self):
+        self.ws = Path(tempfile.mkdtemp(prefix="refuto-a05-sin-almacen-"))
+        (self.ws / ".harness").mkdir(parents=True)
+        (self.ws / ".harness" / "policy.json").write_text(json.dumps({
+            "schema": "harness.policy/v1", "version": "1",
+            "protected_paths": ["**/gates/**", "**/.harness/**", "**/verification/**",
+                                "**/evidence/**"],
+        }), encoding="utf-8")
+        (self.ws / "gates").mkdir()
+        (self.ws / "gates" / "g_test.py").write_text("GATE_ID='G-T'\n", encoding="utf-8")
+        self.engine = ChangeGovernanceEngine(self.ws)
+        self.seed = hashlib.sha256(b"semilla-del-agente").digest()
+        from core.change import _ed25519_public_key
+        self.pk = _ed25519_public_key(self.seed).hex()
+
+    def _propuesta(self, objetivo="gates/g_test.py"):
+        return self.engine.propose(
+            title="colar un cambio en la puerta", author="agente", author_type="agent",
+            diff=f"--- a/{objetivo}\n+++ b/{objetivo}\n+GATE_ID='COLADO'\n",
+            target_files=[objetivo])
+
+    def test_el_almacen_no_existe(self):
+        """La premisa. Sin esto, las de abajo podrían estar midiendo otro estado."""
+        self.assertFalse((self.ws / ".harness" / "trusted_authorizers.json").exists())
+        self.assertEqual({}, self.engine.load_trusted_authorizers())
+
+    def test_el_token_se_emite_igual_y_eso_NO_es_confianza(self):
+        """Acuñar no es autorizar, y el token acuñado se lee como si lo fuera."""
+        prop = self._propuesta()
+        token = self.engine.authorize(prop, authorizer_id="revisor-humano",
+                                      authorizer_type="human", secret_key_bytes=self.seed)
+        self.assertTrue(token.signature, "sin firma no habría nada que rechazar después")
+        self.assertEqual("human", token.authorizer_type,
+                         "el tipo lo declara quien acuña: es autoaserción, no una comprobación")
+
+    def test_aplicar_con_ese_token_se_RECHAZA(self):
+        """El arreglo: ámbito vacío no aprueba."""
+        for objetivo in ("gates/g_test.py", "verification/v.py", "evidence/x.json",
+                         ".harness/policy.json"):
+            with self.subTest(objetivo=objetivo):
+                prop = self._propuesta(objetivo)
+                token = self.engine.authorize(prop, authorizer_id="revisor-humano",
+                                              authorizer_type="human",
+                                              secret_key_bytes=self.seed)
+                with self.assertRaises(ProtectedChangeError):
+                    self.engine.apply(prop, token)
+
+    def test_y_el_motivo_es_A05_y_no_otro(self):
+        """Rechazar por el motivo equivocado habría dado un verde falso al medirlo."""
+        prop = self._propuesta()
+        token = self.engine.authorize(prop, authorizer_id="revisor-humano",
+                                      authorizer_type="human", secret_key_bytes=self.seed)
+        with self.assertRaises(UntrustedAuthorizerError) as caja:
+            self.engine.apply(prop, token)
+        self.assertIn("A05", str(caja.exception))
+        self.assertIn("almacén", str(caja.exception))
+
+    def test_el_fichero_objetivo_NO_se_tocó(self):
+        """Un rechazo que ya escribió no es un rechazo."""
+        antes = (self.ws / "gates" / "g_test.py").read_text(encoding="utf-8")
+        prop = self._propuesta()
+        token = self.engine.authorize(prop, authorizer_id="revisor-humano",
+                                      authorizer_type="human", secret_key_bytes=self.seed)
+        with self.assertRaises(ProtectedChangeError):
+            self.engine.apply(prop, token)
+        self.assertEqual(antes, (self.ws / "gates" / "g_test.py").read_text(encoding="utf-8"))
+
+    def test_con_el_almacen_PUESTO_el_mismo_cambio_se_aplica(self):
+        """La contraparte. Sin ella, el arreglo podría ser «deniega siempre», que no sirve."""
+        (self.ws / ".harness" / "trusted_authorizers.json").write_text(
+            json.dumps({"authorizers": {"revisor-humano": self.pk}}), encoding="utf-8")
+        prop = self._propuesta()
+        token = self.engine.authorize(prop, authorizer_id="revisor-humano",
+                                      authorizer_type="human", secret_key_bytes=self.seed)
+        res = self.engine.apply(prop, token)
+        self.assertEqual("APPLIED", res["status"])
+
+    def test_y_con_un_almacen_de_OTRA_clave_se_rechaza(self):
+        """El tercer estado: hay almacén, y la clave del firmante no es la registrada."""
+        from core.change import _ed25519_public_key
+        ajena = _ed25519_public_key(hashlib.sha256(b"clave-de-una-persona").digest()).hex()
+        (self.ws / ".harness" / "trusted_authorizers.json").write_text(
+            json.dumps({"authorizers": {"revisor-humano": ajena}}), encoding="utf-8")
+        prop = self._propuesta()
+        with self.assertRaises(UntrustedAuthorizerError):
+            token = self.engine.authorize(prop, authorizer_id="revisor-humano",
+                                          authorizer_type="human", secret_key_bytes=self.seed)
+            self.engine.apply(prop, token)
 
 
 if __name__ == "__main__":

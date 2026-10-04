@@ -158,13 +158,22 @@ class TestLaRetiradaTampocoSePropagaYSeDeclara(unittest.TestCase):
                 self.assertEqual("deny",
                                  decide_write(pol, ws.root, "policies/reglas.rego").outcome)
 
-    def test_y_la_norma_de_hoy_NO_lo_deniega(self):
-        """La contraparte: si el motor también lo denegara, lo de arriba no mediría nada."""
+    def test_y_la_norma_de_hoy_NO_lo_deniega_DONDE_SOBRABA(self):
+        """La contraparte, con la precisión que el mecanismo de autoridad permitió afirmar.
+
+        Enunciada el 2026-10-03 como «la norma de hoy permite `policies/` en cualquier sitio», y
+        eso era **demasiado**: `policies/reglas.rego` en la RAÍZ de un espacio gobernado es
+        gobierno y sigue denegado, ahora por `authority_paths`. Lo que el residuo sobre-bloquea
+        es el código ANIDADO, y es ahí donde hay que medir que el motor ya no lo pide.
+        """
         with Workspace("norma-de-hoy") as ws:
-            for ruta in ("security/policies/acceso.rego", "policies/reglas.rego"):
+            (ws.root / ".harness").mkdir(parents=True, exist_ok=True)
+            pol = Policy.default()
+            for ruta, esperado in (("security/policies/acceso.rego", "allow"),
+                                   ("apps/web/policies/rate-limit.ts", "allow"),
+                                   ("policies/reglas.rego", "deny")):
                 with self.subTest(ruta=ruta):
-                    self.assertEqual("allow",
-                                     decide_write(Policy.default(), ws.root, ruta).outcome)
+                    self.assertEqual(esperado, decide_write(pol, ws.root, ruta).outcome)
 
     def test_upgrade_lo_MIDE_y_lo_nombra_como_residuo(self):
         import refuto

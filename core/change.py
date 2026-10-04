@@ -331,18 +331,34 @@ class ChangeGovernanceEngine:
             return {}
 
     def is_target_protected(self, rel_path: str) -> bool:
-        """Determina si un archivo objetivo está bajo una ruta protegida."""
+        """Determina si un archivo objetivo está bajo una ruta protegida o de gobierno.
+
+        Los artefactos de GOBIERNO cuentan, y desde el 2026-10-03 hay que preguntarlo aparte:
+        `policies/base.json` salió de `protected_paths` y pasó a `authority_paths`, que es otro
+        mecanismo (ver `core.policy.DEFAULT_AUTHORITY`). Sin esta rama, A04 habría dejado de
+        exigir token de autorización para tocar el documento del que cuelga la norma — una
+        protección perdida por refactor, que es la forma más silenciosa de perderla.
+
+        Se anclan a la RAÍZ DEL ESPACIO y no se recorren raíces más profundas: aquí sólo hay una
+        ruta relativa de un diff, sin sistema de archivos que consultar. Eso es conservador en la
+        dirección correcta —puede exigir autorización de más, nunca de menos— y la resolución
+        completa la hace el guardián, que sí ve el disco.
+        """
         policy_file = self.workspace / ".harness" / "policy.json"
         if policy_file.exists():
             try:
                 pol = Policy.load(policy_file)
-                return bool(pol.is_protected(rel_path) and not pol.is_writable(rel_path))
+                if pol.is_writable(rel_path):
+                    return False
+                if pol.is_protected(rel_path):
+                    return True
+                return bool(pol.is_authority(rel_path, ("",))[0])
             except Exception:
                 pass
-        # Fallback a DEFAULT_PROTECTED
-        from core.policy import _normalize, _path_matches
+        # Fallback a las constantes del motor
+        from core.policy import DEFAULT_AUTHORITY, _normalize, _path_matches
         norm = _normalize(rel_path)
-        for pat in DEFAULT_PROTECTED:
+        for pat in tuple(DEFAULT_PROTECTED) + tuple(DEFAULT_AUTHORITY):
             if _path_matches(norm, pat):
                 return True
         return False
@@ -391,6 +407,13 @@ class ChangeGovernanceEngine:
         pubkey = _ed25519_public_key(secret_key_bytes)
         pubkey_hex = pubkey.hex()
 
+        # Emitir un token NO es una afirmación de confianza, y conviene decirlo aquí porque se
+        # lee como si lo fuera: con el almacén ausente, o con un `authorizer_id` que no está en
+        # él, este método devuelve un token perfectamente firmado. El control de identidad vive
+        # en `apply`, que es donde se escribe, y desde el 2026-10-03 falla cerrado. Se deja
+        # permisivo a propósito: acuñar en una máquina sin el almacén y aplicar en otra que sí lo
+        # tiene es un flujo legítimo, y mover el rechazo aquí no añadiría ninguna garantía —sólo
+        # cambiaría dónde salta—. No trate «token emitido» como «autorizador reconocido».
         trusted = trusted_keys or self.load_trusted_authorizers()
         if trusted and authorizer_id in trusted:
             if trusted[authorizer_id].lower() != pubkey_hex.lower():
@@ -460,18 +483,54 @@ class ChangeGovernanceEngine:
                     f"A06: El nonce '{authorization.nonce}' ya fue consumido previamente (Replay Attack)."
                 )
 
-            # Invariante A05: Clave en almacén de confianza
-            trusted = trusted_keys or self.load_trusted_authorizers()
-            if trusted:
-                if authorization.authorizer_id not in trusted:
-                    raise UntrustedAuthorizerError(
-                        f"A05: Autorizador '{authorization.authorizer_id}' no es de confianza."
-                    )
-                expected_pk = trusted[authorization.authorizer_id].lower()
-                if authorization.public_key.lower() != expected_pk:
-                    raise UntrustedAuthorizerError(
-                        f"A05: Clave pública del token no coincide con la registrada para '{authorization.authorizer_id}'."
-                    )
+            # Invariante A05: Clave en almacén de confianza. FALLA CERRADO.
+            #
+            # Decía `if trusted:`, y un almacén ausente o vacío saltaba el bloque entero. Medido
+            # el 2026-10-03 a través del protocolo, de punta a punta:
+            #
+            #     propone  agente            → propuesta creada
+            #     autoriza «revisor-humano»  → token EMITIDO (identidad inventada, par propio)
+            #     aplica   gates/g_colado.py → *** APLICADO ***
+            #
+            # Lo mismo con `verification/**` y `evidence/**`. Es decir: un agente podía escribir
+            # su propio juez y su propia evidencia inventándose un segundo nombre, que es la
+            # única propiedad que este producto existe para impedir. Sólo `.harness/policy.json`
+            # se salvaba, y por otro invariante (A03, quórum de gobernanza).
+            #
+            # A02 seguía verificando la firma y por eso no se notaba: verifica contra la clave
+            # pública que el TOKEN TRAE, así que sin A05 demuestra que el token no se alteró, no
+            # que lo firmara nadie en concreto. Una firma sin almacén de confianza es un sello
+            # sin registro.
+            #
+            # Un almacén vacío es un ÁMBITO VACÍO, y en esta herramienta un ámbito vacío no
+            # aprueba: es la misma regla que hace que una suite de 0 pruebas falle y que
+            # `G-SECURITY` no apruebe con el escáner caído. «No puedo comprobar quién firma» no
+            # es «lo firmó alguien de confianza».
+            #
+            # Coste declarado: a partir de aquí, un espacio sin `.harness/trusted_authorizers.json`
+            # NO puede aplicar ningún cambio sobre superficie protegida por esta vía. Es lo
+            # correcto —registrar al primer autorizador es un acto de persona, y ese fichero está
+            # bajo `.harness/**`, protegido— y hoy no rompe ningún uso: el almacén no existe en
+            # ninguno de los 11 espacios medidos, luego nadie estaba usando esta vía con
+            # autoridad real. Lo que se retira es la capacidad de usarla SIN autoridad.
+            trusted = trusted_keys if trusted_keys else self.load_trusted_authorizers()
+            if not trusted:
+                raise UntrustedAuthorizerError(
+                    "A05: no hay almacén de autorizadores de confianza en este espacio "
+                    "(`.harness/trusted_authorizers.json`), así que la identidad del firmante no "
+                    "se puede comprobar. No se aprueba: un almacén vacío no es un almacén que "
+                    "autorice a cualquiera. Registre al autorizador — es un acto de persona, y "
+                    "ese fichero está protegido justo por eso."
+                )
+            if authorization.authorizer_id not in trusted:
+                raise UntrustedAuthorizerError(
+                    f"A05: Autorizador '{authorization.authorizer_id}' no es de confianza."
+                )
+            expected_pk = trusted[authorization.authorizer_id].lower()
+            if authorization.public_key.lower() != expected_pk:
+                raise UntrustedAuthorizerError(
+                    f"A05: Clave pública del token no coincide con la registrada para '{authorization.authorizer_id}'."
+                )
 
             # Invariante A02: Verificar firma Ed25519
             try:

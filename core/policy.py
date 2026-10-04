@@ -132,9 +132,59 @@ DEFAULT_PROTECTED = (
     "**/.gemini/**", "**/.aidlc/**", "**/opencode.harness.json",
     "**/inputs/**", "**/insumos/**",
     "**/evidence/**", "**/evidencia/**",
-    "**/gates/**", f"**/{RUTA_BASE}",
+    "**/gates/**",
     "**/*.lock.json",
     "**/harness.manifest.json", "**/harness.lock.json",
+)
+
+#: Artefactos de GOBIERNO, y la diferencia con `DEFAULT_PROTECTED` es el mecanismo, no la lista.
+#:
+#: Estos patrones NO se comparan contra la ruta relativa al espacio: se comparan contra la ruta
+#: relativa a cada **raíz de autoridad** que contenga al objetivo. Una raíz de autoridad es un
+#: directorio con `.harness/` dentro —la raíz de un espacio gobernado— y la del propio espacio
+#: cuenta siempre, tenga `.harness/` o no.
+#:
+#: El defecto que obliga a añadir un mecanismo y no sólo a corregir datos
+#: ----------------------------------------------------------------------
+#: `protected_paths` tenía UN solo vocabulario: un glob sobre la ruta relativa al espacio. Por
+#: ahí se estaban forzando dos semánticas que no son la misma:
+#:
+#:   (a) «este artefacto esté donde esté» — `.harness/`, `.claude/`: nombres que el arnés
+#:       reserva, y que por eso se pueden globear con `**/` sin ambigüedad;
+#:   (b) «el artefacto de gobierno de un espacio, en SU raíz» — `policies/`: una palabra común
+#:       que el producto también usa para su propio código.
+#:
+#: Con sólo (a) disponible, la norma tenía que elegir entre dos errores, y los dos se midieron:
+#:
+#:     `**/policies/**`   →  de 61 directorios `policies/` clasificables en un espacio real,
+#:                           **46 eran código fuente y 15 gobierno**: ~75 % de error, y el
+#:                           espacio NO podía retirarlo (`protected_paths` acumula, y la
+#:                           excepción que lo compensaría es `REDUCE`: declararla rompe la
+#:                           cadena entera).
+#:     `policies/**`      →  sólo cubría la raíz, así que el documento de norma de cada
+#:                           repositorio hijo quedaba reescribible. Es el agujero del 2026-09-24.
+#:
+#: Ninguno de los dos es un problema de datos: los dos son el mismo patrón intentando decir algo
+#: que su vocabulario no puede decir. De ahí este campo.
+#:
+#: Cómo resuelve las dos a la vez, medido el 2026-10-03
+#: ---------------------------------------------------
+#:     repo-hijo/policies/base.json                       deny   (raíz: repo-hijo)
+#:     policies/reglas.rego                               deny   (raíz: el espacio)
+#:     ai/…/src/kernel/mk/policies/x.rs                   allow  (ninguna raíz lo ancla)
+#:     domain/governance/policies/x.yaml                  allow  (ninguna raíz lo ancla)
+#:
+#: Por qué se evalúa en TODAS las raíces que contienen al objetivo, y no sólo en la más cercana
+#: --------------------------------------------------------------------------------------------
+#: Con «la más cercana» el mecanismo se puede evadir plantando una raíz: si alguien crea
+#: `policies/.harness/`, la raíz más cercana de `policies/base.json` pasa a ser `policies/`, la
+#: ruta relativa queda en `base.json`, y `policies/**` deja de casar. Evaluar en todas las raíces
+#: hace la evasión **inexpresable** en vez de improbable: añadir una raíz más profunda sólo puede
+#: AÑADIR coincidencias, nunca quitarlas. Es monótono por construcción, que es la única clase de
+#: control que no hay que defender caso por caso. La prueba que lo fija está en
+#: `tests/adversarial/test_autoridad_por_raiz.py::test_plantar_una_raiz_no_desprotege`.
+DEFAULT_AUTHORITY = (
+    "policies/**",
 )
 
 #: Patrones que la norma RETIRÓ, con el motivo y la fecha. No es historia: es lo que
@@ -303,6 +353,10 @@ class Policy:
     schema: str = POLICY_SCHEMA
     version: str = "1"
     protected_paths: tuple = DEFAULT_PROTECTED
+    #: Lo mismo que `protected_paths` pero anclado a cada RAÍZ DE AUTORIDAD que contenga al
+    #: objetivo, no a la raíz del espacio. Ver `DEFAULT_AUTHORITY`: es un mecanismo distinto,
+    #: no una segunda lista de lo mismo.
+    authority_paths: tuple = DEFAULT_AUTHORITY
     #: Se comprueba ANTES que `protected_paths`: es la excepción, y una excepción que se
     #: evaluara después nunca ganaría.
     writable_paths: tuple = DEFAULT_WRITABLE
@@ -357,6 +411,34 @@ class Policy:
             if _path_matches(norm, pattern):
                 return pattern
         return ""
+
+    def is_authority(self, rel_path: str, raices=()) -> tuple:
+        """`(patrón, raíz)` si la ruta es un artefacto de gobierno, o `("", "")`.
+
+        `raices` son los prefijos relativos al espacio de cada raíz de autoridad que CONTIENE al
+        objetivo, de la más externa a la más interna; `""` es la raíz del espacio. Las calcula
+        `raices_de_autoridad`, que mira el sistema de archivos; esta función es pura para que se
+        pueda probar sin montar un árbol.
+
+        Se recorren TODAS, no la más cercana: ver `DEFAULT_AUTHORITY`. Se devuelve la primera
+        coincidencia empezando por la más externa, porque es la autoridad más alta y es la que
+        hay que citar en el motivo.
+        """
+        norm = _normalize(rel_path)
+        for raiz in (raices or ("",)):
+            raiz = _normalize(raiz)
+            if raiz:
+                if not (norm == raiz or norm.startswith(raiz + "/")):
+                    continue
+                dentro = norm[len(raiz) + 1:]
+            else:
+                dentro = norm
+            if not dentro:
+                continue
+            for pattern in self.authority_paths:
+                if _path_matches(dentro, pattern):
+                    return pattern, raiz
+        return "", ""
 
     def is_writable(self, rel_path: str) -> str:
         """El patrón de excepción que libera esa ruta, o cadena vacía."""
@@ -609,6 +691,43 @@ def _path_matches(norm: str, pattern: str) -> bool:
             if norm == root_base or norm.startswith(root_base + "/"):
                 return True
     return False
+
+
+#: Qué convierte un directorio en raíz de autoridad. Es el directorio del arnés: donde viven la
+#: política, la evidencia y el estado de un espacio gobernado. No se exige que haya
+#: `policy.json` legible dentro, a propósito: un `.harness/` a medias sigue siendo la raíz de un
+#: espacio —y si la condición fuera «con política válida», romper la política de un hijo
+#: desactivaría la protección de su documento de norma, que es lo contrario de lo que hace falta.
+MARCADOR_DE_AUTORIDAD = ".harness"
+
+
+def raices_de_autoridad(workspace: Path, resolved: Path) -> tuple:
+    """Prefijos relativos de cada raíz de autoridad que contiene a `resolved`, de fuera a dentro.
+
+    La raíz del espacio va SIEMPRE, con prefijo `""`, tenga `.harness/` o no: un espacio sin
+    instalar sigue estando gobernado por la raíz del motor, y si no se anclara ahí los patrones
+    de autoridad no se aplicarían en el único sitio donde hoy se aplican todos.
+
+    Se recorre desde la raíz del espacio hacia el objetivo y NO al contrario: así el orden de
+    salida es de autoridad más alta a más baja, que es el orden en que hay que citarlas.
+
+    Mira el sistema de archivos, así que es la frontera impura del mecanismo. Lo que compara es
+    la ruta YA RESUELTA (`os.path.realpath`), por lo que un enlace simbólico no puede fabricar
+    una raíz que no esté donde el sistema de archivos dice.
+    """
+    try:
+        rel = resolved.relative_to(workspace)
+    except ValueError:
+        return ("",)
+    raices = [""]
+    actual = workspace
+    # `rel.parts[:-1]`: los ANCESTROS. El propio objetivo no puede ser su raíz de autoridad —si
+    # lo fuera, `repo/.harness` se anclaría en sí mismo y la ruta relativa quedaría vacía.
+    for parte in rel.parts[:-1]:
+        actual = actual / parte
+        if (actual / MARCADOR_DE_AUTORIDAD).is_dir():
+            raices.append(str(actual.relative_to(workspace)).replace(os.sep, "/"))
+    return tuple(raices)
 
 
 ALLOW, DENY, ASK = "allow", "deny", "ask"
@@ -977,6 +1096,20 @@ def _decidir_escritura(policy: Policy, workspace: Path, target: str,
         if pattern:
             return Decision(DENY, rule=pattern,
                             reason=_motivo_protegida(rel, pattern, resolved.exists()))
+        # Gobierno: el mismo veredicto por un mecanismo distinto. Va DESPUÉS de
+        # `protected_paths` porque éste no toca el sistema de archivos y aquél sí: cuando las
+        # dos denegarían, se cita la más barata y la que no depende del estado del disco.
+        patron_aut, raiz = policy.is_authority(rel, raices_de_autoridad(ws, resolved))
+        if patron_aut:
+            donde = f"la raíz de autoridad «{raiz}»" if raiz else "la raíz del espacio"
+            return Decision(
+                DENY, rule=patron_aut,
+                reason=f"«{rel}» es un artefacto de GOBIERNO: coincide con «{patron_aut}» "
+                       f"relativo a {donde}. Lo que se protege no es el nombre del directorio "
+                       f"—código fuente en un `policies/` anidado se escribe sin problema— sino "
+                       f"la autoridad del documento: ahí cuelga la norma de la que depende este "
+                       f"espacio y los que hereden de él. Si esto es código y no gobierno, no "
+                       f"vive en la raíz de un espacio gobernado.")
 
     secret_pat = policy.is_secret_path(rel)
     if secret_pat:

@@ -42,3 +42,10 @@ dist/
 # nombre del cliente en la ruta y este repositorio es público: sin esta línea, un `git add -A`
 # lo publica. Es el accidente que `AGENTS.md` cuenta en su primer párrafo, repetido.
 .telhar-cli/
+
+# Evidencia de remediación: medida en UNA máquina y sobre UN estado. Lleva rutas absolutas,
+# nombre de host, pids y rutas de espacios cliente, así que por `AGENTS.md` no puede entrar a
+# un repositorio público. Se queda en disco —es evidencia, y se cita por su sha256— y no se
+# publica. Lo detectó el propio control: `scripts/preflight.py::datos-personales` marcó ocho de
+# estos ficheros en cuanto se escribieron, y ve lo NO rastreado, no sólo el índice.
+artifacts/harness/
