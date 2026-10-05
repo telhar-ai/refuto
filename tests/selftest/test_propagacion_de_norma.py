@@ -55,10 +55,18 @@ class TestLaProteccionNuevaSePropagaSola(unittest.TestCase):
         """Sin `upgrade`, sin tocar su fichero, y aunque su fichero no lo diga."""
         with Workspace("norma-anterior") as ws:
             pol = self._cargar(ws)
+            # Los cuatro casos son nombres que el arnes RESERVA. Hasta el 2026-10-05 habia
+            # aqui `repo-hijo/evidence/run.json` y `a/b/repo-nieto/gates/g.py`: palabras
+            # COMUNES, que desde entonces se comparan contra cada raiz de autoridad y por tanto
+            # no se protegen en un hijo que no trae `.harness/`. La propiedad que esta prueba
+            # afirma —la proteccion del motor llega sola a un espacio ya instalado— no depende
+            # de cual de los dos vocabularios se use, asi que se demuestra con el que no
+            # cambio. El caso anclado se prueba en
+            # `tests/adversarial/test_nombres_comunes_anclados.py::TestB`.
             for ruta in ("repo-hijo/.harness/bin/guard",
                          "repo-hijo/.harness/policy.json",
-                         "repo-hijo/evidence/run.json",
-                         "a/b/repo-nieto/gates/g.py"):
+                         "repo-hijo/.kiro/steering/metodo.md",
+                         "a/b/repo-nieto/harness.manifest.json"):
                 with self.subTest(ruta=ruta):
                     self.assertEqual("deny", decide_write(pol, ws.root, ruta).outcome,
                                      "la protección del motor no llegó al espacio instalado")
@@ -74,9 +82,18 @@ class TestLaProteccionNuevaSePropagaSola(unittest.TestCase):
     def test_toda_proteccion_de_fabrica_acaba_cubierta(self):
         with Workspace("norma-anterior-todas") as ws:
             pol = self._cargar(ws)
-            faltan = [p for p in DEFAULT_PROTECTED
-                      if not pol.is_protected(p.removeprefix("**/").removesuffix("/**")
-                                              .replace("*", "sonda"))]
+            # La sonda se deriva del patron, y hasta el 2026-10-05 lo hacia asumiendo que todo
+            # patron era `**/<un-segmento>/**`. Con `**/sdd/espacios/*/evidencia/**` en la norma
+            # —varios segmentos y un comodin EN MEDIO— el nombre resultante ya no era una ruta
+            # dentro del patron, y la prueba fallaba por su propio constructor y no por la
+            # norma. Un patron de directorio se sondea con un FICHERO dentro.
+            def _sonda(patron: str) -> str:
+                base = patron.removeprefix("**/")
+                if base.endswith("/**"):
+                    base = base.removesuffix("/**") + "/sonda.txt"
+                return base.replace("*", "sonda")
+
+            faltan = [p for p in DEFAULT_PROTECTED if not pol.is_protected(_sonda(p))]
             self.assertEqual([], faltan, f"no se propagaron: {faltan}")
 
 
@@ -180,14 +197,29 @@ class TestLaRetiradaTampocoSePropagaYSeDeclara(unittest.TestCase):
 
         with Workspace("residuo-medido") as ws:
             ws.json(".harness/policy.json", NORMA_ANTERIOR)
+            from core.policy import RETIRADAS_DE_NORMA
+
             residuo = refuto._residuo_de_norma(ws.root)
-            self.assertEqual(["policies/**"], [p for p, _, _ in residuo],
-                             f"el residuo real no se detectó; medido: {residuo}")
+            # El esperado se DERIVA: es la interseccion de lo que la norma retiro con lo que
+            # este espacio declara. Repetir `["policies/**"]` a mano es como esta prueba se
+            # puso en rojo al anclar las siete palabras comunes el 2026-10-05: afirmaba la
+            # tabla de ayer en vez de la propiedad —«todo lo retirado que el espacio aun
+            # declara se nombra»—, que es lo que `refuto upgrade` necesita.
+            esperado = [q for q in NORMA_ANTERIOR["protected_paths"]
+                        if q in RETIRADAS_DE_NORMA]
+            self.assertEqual(sorted(esperado), sorted(p for p, _, _ in residuo),
+                             f"el residuo real no se detecto; medido: {residuo}")
             self.assertTrue(all(m for _, m, _ in residuo),
                             "un patrón que sobra sin motivo no se puede decidir")
-            self.assertEqual([str(ws.root / ".harness" / "policy.json")],
-                             [f for _, _, f in residuo],
+            # Se compara el CONJUNTO de ficheros, no la lista: el residuo tiene una entrada por
+            # patron y todas las de este espacio salen del mismo fichero. Comparar listas hacia
+            # que la prueba dependiera de CUANTOS patrones se hubieran retirado, que no es lo
+            # que afirma — lo que afirma es que cada entrada dice DONDE se declara.
+            self.assertEqual({str(ws.root / ".harness" / "policy.json")},
+                             {f for _, _, f in residuo},
                              "sin decir qué fichero lo declara, «quítelo» no es una instrucción")
+            self.assertTrue(all(f for _, _, f in residuo),
+                            "alguna entrada del residuo no nombra fichero")
 
     def test_lo_encuentra_tambien_cuando_lo_declara_el_PADRE(self):
         """El hueco que tuvo la primera versión de este control, y cómo se encontró.
