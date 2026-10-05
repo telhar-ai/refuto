@@ -6,7 +6,22 @@
 # porque este comando se invoca DESDE el espacio gobernado, que esta en otro sitio.
 set -eu
 
-BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# `$0` puede ser un ENLACE: la instalacion recomendada deja
+# `~/.local/bin/refuto -> <repo>/bin/refuto`, y `dirname` no resuelve enlaces. Sin esto el
+# lanzador buscaba `refuto.py` junto al ENLACE (`~/.local/refuto.py`, que no existe) en vez de
+# junto a si mismo, y `refuto` desde el PATH salia 2 con «no encuentro refuto.py» mientras la
+# ruta real funcionaba. Medido el 2026-10-04. Se resuelve la cadena entera, no un solo salto:
+# un enlace a un enlace es lo que deja un reinstalado.
+SELF=$0
+while [ -L "$SELF" ]; do
+  DESTINO=$(readlink -- "$SELF")
+  case $DESTINO in
+    /*) SELF=$DESTINO ;;
+    *)  SELF=$(dirname -- "$SELF")/$DESTINO ;;
+  esac
+done
+
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 REFUTO_PY="$BIN_DIR/../refuto.py"
 
 if [ ! -f "$REFUTO_PY" ]; then

@@ -451,6 +451,13 @@ def _emit_event(workspace: Path, fact: dict, decision, kind: str,
             # decisiones registradas antes de esto y ninguna sabía el rol.
             "role": fact.get("role", ""),
             "role_capabilities": list(_capacidades(fact.get("role", ""))),
+            # EN QUE SESION. `role` dice de que clase era el sujeto; sin esto no se puede
+            # agrupar lo que hizo UNA sesion, ni casar sus decisiones con su `session/open` y
+            # su `session/close`. Lo deja `core/session.py:1136` en el entorno, igual que el
+            # rol, y vacio significa «sesion que no abrio el lanzador gobernado» — que es un
+            # dato, no una ausencia: medido el 2026-10-04, las 37 136 decisiones del diario de
+            # telhar no llevaban ninguna, asi que ningun analisis podia ir por sesion.
+            "run_id": os.environ.get("HARNESS_RUN_ID", ""),
             # QUÉ política decidió esto. Sin el digest, un evento dice qué regla denegó pero
             # no de qué política efectiva salió — y con herencia esa pregunta pasa de ociosa a
             # central: la regla pudo venir del cliente, y el cliente pudo cambiar después.
