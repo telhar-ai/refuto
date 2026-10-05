@@ -100,7 +100,6 @@ RUTA_BASE = "policies/base.json"
 #: Un espacio que guarde más documentos de norma en `policies/` los declara él, y esa declaración
 #: sí se propaga a sus hijos. Lo que se pierde a cambio es nombrado, no silencioso.
 DEFAULT_PROTECTED = (
-    "**/verification/**", "**/verificacion/**",
     "**/.kiro/steering/**", "**/.harness/**",
     "**/.claude/**", "**/.agents/**", "**/.kiro/**", "**/.codex/**",
     # Los runtimes que faltaban. La lista de arriba se escribió a mano y los runtimes que el
@@ -130,9 +129,17 @@ DEFAULT_PROTECTED = (
     # demuestra que la política de opencode esté aplicada — el propio adaptador la declara
     # `unenforceable`, y sigue siéndolo.
     "**/.gemini/**", "**/.aidlc/**", "**/opencode.harness.json",
-    "**/inputs/**", "**/insumos/**",
-    "**/evidence/**", "**/evidencia/**",
-    "**/gates/**",
+    # El gobierno del modelo SDD, protegido por la FORMA de la ruta y no por una palabra.
+    #
+    # `sdd/espacios/<nombre>/{evidencia,insumos,verificacion}/` es la disposición que el propio
+    # motor enumera (`core.session`, `core.context`), así que cubrirla aquí no es nomenclatura de
+    # un espacio: es el modelo. Y una ruta de CUATRO segmentos no colisiona con código fuente —
+    # que es lo que sí hacía la palabra suelta—, así que el prefijo `**/` es seguro en esta forma
+    # y no lo era en aquélla. Es la mitad que se conserva del cambio de abajo: lo que dejó de
+    # estar protegido fue el nombre a secas, no el artefacto de gobierno.
+    "**/sdd/espacios/*/evidencia/**", "**/sdd/espacios/*/evidence/**",
+    "**/sdd/espacios/*/insumos/**", "**/sdd/espacios/*/inputs/**",
+    "**/sdd/espacios/*/verificacion/**", "**/sdd/espacios/*/verification/**",
     "**/*.lock.json",
     "**/harness.manifest.json", "**/harness.lock.json",
 )
@@ -185,7 +192,40 @@ DEFAULT_PROTECTED = (
 #: `tests/adversarial/test_autoridad_por_raiz.py::test_plantar_una_raiz_no_desprotege`.
 DEFAULT_AUTHORITY = (
     "policies/**",
+    # Las seis palabras COMUNES que quedaban con `**/` en `protected_paths`, por el mismo
+    # argumento que `policies/**` y con el mismo mecanismo (2026-10-05).
+    #
+    # `policies/**` se acotó el 2026-10-03 y las demás se quedaron, aunque son la misma clase de
+    # error: palabras que el producto usa para su propio código. Medido en un espacio multi-repo
+    # real sobre el diario del guardián —no sobre un censo de directorios, sino sobre lo que el
+    # agente intentó escribir de verdad—, de 4 denegaciones por `**/evidence/**`, **3 eran código
+    # fuente del producto** (`<repo>/src/lib/evidence/`, `<repo>/src/modules/evidence/`, un
+    # esquema de contrato) y 1 era gobierno: ~75 % de error, la misma proporción que midió
+    # `policies/**`.
+    #
+    # El caso que lo hizo visible: un módulo del producto llamado `evidence` —un servicio de
+    # anclaje Merkle, cuyo dominio ES la evidencia— quedaba ENTERO fuera del alcance del agente,
+    # incluido el fichero que ya existía. No era «no puedes crear ahí»: era «no puedes arreglar
+    # tu propio módulo». Y el espacio no podía repararlo, medido igual que el 2026-10-03:
+    #
+    #     retirar el patrón de `protected_paths`     →  deny: el efectivo es la UNIÓN (`ACUMULA`)
+    #     declarar la excepción en `writable_paths`  →  HerenciaIrresoluble: el guardián deniega TODO
+    #     `protected_paths: []`                      →  deny
+    #
+    # Las tres direcciones cerradas es la definición de irreparable desde el espacio.
+    #
+    # Lo que se pierde y a quién le toca: un directorio de gobierno con uno de estos nombres que
+    # NO esté en la raíz de su espacio ni tenga la forma SDD deja de estar cubierto por la norma
+    # base. Su dueño lo añade a `authority_paths`, que es `ACUMULA` y por tanto la dirección que
+    # la herencia permite. Es el error reparable; el de antes no lo era.
+    "evidence/**", "evidencia/**",
+    "inputs/**", "insumos/**",
+    "gates/**",
+    "verification/**", "verificacion/**",
 )
+
+_MOTIVO_ANCLADO_2026_10_05 = (
+    "anclado a la raíz de autoridad el 2026-10-05 (`authority_paths`): con `**/` protegía el código del producto —un espacio real tenía un módulo de dominio con ese nombre, inescribible entero— y el espacio no podía retirarlo. El gobierno sigue cubierto en la raíz de cada espacio y en la forma `sdd/espacios/*/…`.")
 
 #: Patrones que la norma RETIRÓ, con el motivo y la fecha. No es historia: es lo que
 #: `refuto upgrade` necesita para nombrar el residuo.
@@ -202,6 +242,13 @@ RETIRADAS_DE_NORMA = {
     "policies/**": "acotado a `policies/base.json` el 2026-10-03: protegía el código del "
                    "producto (cualquier `policies/` a cualquier profundidad) para cubrir un "
                    "solo documento de norma, y el espacio no podía retirarlo.",
+    "evidence/**": _MOTIVO_ANCLADO_2026_10_05,
+    "evidencia/**": _MOTIVO_ANCLADO_2026_10_05,
+    "inputs/**": _MOTIVO_ANCLADO_2026_10_05,
+    "insumos/**": _MOTIVO_ANCLADO_2026_10_05,
+    "gates/**": _MOTIVO_ANCLADO_2026_10_05,
+    "verification/**": _MOTIVO_ANCLADO_2026_10_05,
+    "verificacion/**": _MOTIVO_ANCLADO_2026_10_05,
 }
 
 #: Excepciones DENTRO de lo protegido. Se comprueban ANTES que `protected_paths`.
@@ -241,10 +288,33 @@ DEFAULT_WRITABLE = (
 #:
 #: Se declara por patrón y no con un «permite fuera del espacio»: la diferencia entre una
 #: excepción nombrada y un agujero es que la excepción se puede leer y discutir.
+#: Lo único escribible fuera del espacio. Dos clases, y la distinción NO es decorativa.
+#:
+#: DURADERO · sobrevive a la sesión y a la máquina apagada. Aquí va lo que una persona va a
+#: leer después: un procedimiento, un informe, una decisión.
+#:
+#: EFÍMERO · `/tmp` es el cuaderno de la sesión y **se poda**. Medido el 2026-10-04 en esta
+#: máquina: `/etc/periodic/daily/` no existe, pero `com.apple.tmp_cleaner` sí, y corre a
+#: diario a las 00:00. El efecto observado es que el directorio sobrevive y sus FICHEROS
+#: desaparecen: `claude-telhar`, `claude-rlfx`, `claude-publico`, `claude-falsacion` y
+#: `claude-refuto-audit` estaban los cinco a cero ficheros con el directorio intacto, que es
+#: la forma más engañosa de perder algo — la ruta sigue ahí y parece que no pasó nada.
+#:
+#: Por qué esto es un campo de política y no un consejo: de 1 558 escrituras a `/tmp`
+#: registradas en los diarios, 504 tenían forma de entregable —`INFORME-RLFX.md`,
+#: `INFORME-FRONTERA.md`, `RUNBOOK-dell-runner.md`, secciones de un artículo, decisiones de
+#: auditoría—. El agente no elegía mal: `/tmp` era el ÚNICO sitio duradero que no era la
+#: memoria, así que todo lo que no cabía en un recuerdo acababa en un directorio que se poda.
+#: Un control que no ofrece camino legítimo se rodea; aquí el camino faltaba.
+#:
+#: `/tmp` y `/private/tmp` NO son una redundancia: en macOS `/tmp` es un enlace a
+#: `private/tmp`, pero el guardián compara la CADENA que pasó la herramienta, y son dos
+#: cadenas distintas para el mismo sitio. Quitar una deja media puerta abierta.
 DEFAULT_EXTERNAL_WRITE = (
-    "~/.claude/projects/*/memory/**",     # la memoria persistente de Claude Code
-    "/tmp/claude-*/**",                   # el cuaderno de la sesión
-    "/private/tmp/claude-*/**",           # el mismo, como lo resuelve macOS
+    "~/.claude/projects/*/memory/**",     # DURADERO · la memoria persistente de Claude Code
+    "~/.claude/projects/*/artifacts/**",  # DURADERO · lo que una persona leerá después
+    "/tmp/claude-*/**",                   # EFÍMERO · el cuaderno; se poda a diario a las 00:00
+    "/private/tmp/claude-*/**",           # EFÍMERO · el mismo sitio, como lo escribe macOS
 )
 
 #: Rutas cuyo contenido nunca debe leerse, aunque el agente pida.
@@ -252,6 +322,34 @@ DEFAULT_SECRET_READ_DENY = (
     "**/.env", "**/.env.*", "**/secrets/**", "**/*.pem", "**/*.key",
     "**/id_rsa", "**/id_ed25519", "**/credentials", "**/.netrc",
     "**/auth.json", "**/.aws/credentials",
+)
+
+#: Excepcion NOMBRADA a `secret_read_deny`, evaluada ANTES. Es la misma forma que
+#: `writable_paths` ante `protected_paths`, y por la misma razon: una excepcion evaluada
+#: despues nunca podria ganarle a la regla general. Un mecanismo nuevo con una forma nueva es
+#: un mecanismo que nadie sabe auditar.
+#:
+#: Un `.env.example` es la PLANTILLA que se publica EN el repositorio para que alguien escriba
+#: su `.env` al lado; el `.env` real va en `.gitignore`. Tratar la plantilla como credencial no
+#: protege nada, y cobra una aprobacion humana por mirar el directorio donde vive.
+#:
+#: Medido el 2026-10-04 sobre las 547 decisiones de esta clase del diario de telhar que se
+#: pudieron atribuir a un fichero: 451 (82,5 %) las disparaba un `.env.example` o un
+#: `.env.local.example`, 81 un fichero cifrado con sops y 15 una credencial de verdad. El
+#: 97,3 % de las interrupciones no protegia nada, y la tasa crecia —12 en agosto, 119 en
+#: septiembre, 467 en octubre— porque el trabajo se movia a los repositorios que tienen
+#: plantilla. Comprobado en `security/foedus/.env.example`: 30 claves, rastreado por git, y sus
+#: tres valores largos son `postgresql://…@localhost` con contrasena literal `secret`, un
+#: `JWT_SECRET` que contiene las palabras «change · generate · with · openssl · rand», y un
+#: `VAULT_ADDR`. Ninguno es una credencial.
+#:
+#: Son SUFIJOS de plantilla, no de entorno: `.env.local` y `.env.production` NO estan aqui.
+#: El comodin final cubre la plantilla POR DESTINO —medido: `.env.example.tools` en
+#: praxis-api disparaba 36 aprobaciones de octubre el solo—, que es como se nombra una
+#: plantilla cuando hay varias.
+PLANTILLAS_NO_SECRETAS = (
+    "**/.env.example*", "**/.env.sample*", "**/.env.template*", "**/.env.dist*",
+    "**/.env.*.example*", "**/.env.*.sample*", "**/.env.*.template*",
 )
 
 #: Nombres de variable de entorno con FORMA de credencial. Estructurales, nunca nombres de
@@ -491,6 +589,11 @@ class Policy:
 
     def is_secret_path(self, rel_path: str) -> str:
         norm = _normalize(rel_path)
+        # ANTES que `secret_read_deny`: ver `PLANTILLAS_NO_SECRETAS`. Una plantilla no es una
+        # credencial, asi que no hay nada que ponderar — no coincide, y punto.
+        for plantilla in PLANTILLAS_NO_SECRETAS:
+            if _path_matches(norm, plantilla):
+                return ""
         for pattern in self.secret_read_deny:
             if _path_matches(norm, pattern):
                 return pattern
@@ -815,6 +918,49 @@ def _vuelca_el_entorno(orden: str) -> bool:
     return False
 
 
+#: Bytes que se miran por cada extremo del fichero al verificar el cifrado en reposo.
+VENTANA_CIFRADO = 8192
+
+
+def _cifrado_en_reposo(ruta: Path) -> bool:
+    """¿Este fichero esta cifrado en reposo, VERIFICADO por su contenido?
+
+    Por que no basta el sufijo
+    --------------------------
+    `.sops` es un NOMBRE, no una prueba. Un `.env.local.sops` a medio cifrar, abortado a mitad
+    o renombrado a mano lleva el mismo sufijo y las credenciales en claro. Decidir por el
+    nombre convertiria el control en «confia en como se llama», que es la clase de excepcion
+    que acaba siendo el agujero. Se exige la marca que sops escribe de verdad: el sobre
+    `ENC[AES256_GCM…` Y su bloque de metadatos. Las dos, porque sólo el sobre lo lleva tambien
+    un fichero con un unico valor cifrado entre otros en claro.
+
+    Por que cabeza Y cola, y no una cabecera
+    ----------------------------------------
+    En formato dotenv sops deja el sobre en la primera linea y los metadatos `sops_*` al FINAL.
+    Medido el 2026-10-04 en los siete `.env*.sops` de telhar: `ENC[` en el byte 1 o 17, y los
+    metadatos en el 691, 3259, 5439, 7060, 8550, 8708 y 10279. Una lectura de 4 KB desde el
+    principio habria encontrado el sobre y perdido los metadatos en cinco de los siete, y la
+    comprobacion habria dado False siempre: un arreglo que no arregla nada y nadie nota.
+
+    Falla CERRADO
+    -------------
+    Si no se puede leer, o falta cualquiera de las dos marcas, devuelve False y el fichero sigue
+    siendo una credencial. No poder demostrar que esta cifrado no es haber demostrado que lo
+    esta — la misma regla que `effects: read-only` en `core/grants.py`.
+    """
+    try:
+        tam = ruta.stat().st_size
+        with ruta.open("rb") as fh:
+            muestra = fh.read(VENTANA_CIFRADO)
+            if tam > VENTANA_CIFRADO:
+                fh.seek(max(VENTANA_CIFRADO, tam - VENTANA_CIFRADO))
+                muestra += fh.read(VENTANA_CIFRADO)
+    except (OSError, ValueError):
+        return False
+    return (b"ENC[AES256_GCM" in muestra
+            and (b"sops_" in muestra or b"sops:" in muestra))
+
+
 def _lecturas_secretas(policy: Policy, ws: Path, lecturas, orden_cruda: str = "") -> list:
     """Las lecturas de la orden que exponen una ruta de credencial: `[(ruta, patrón)]`.
 
@@ -865,6 +1011,16 @@ def _lecturas_secretas(policy: Policy, ws: Path, lecturas, orden_cruda: str = ""
             continue
         patron = policy.is_secret_path(lectura)
         if patron:
+            # Cifrado en reposo VERIFICADO: leerlo devuelve el sobre, no la credencial, asi que
+            # pedir una aprobacion humana no protege nada. Se verifica por contenido y falla
+            # cerrado; ver `_cifrado_en_reposo`.
+            try:
+                cand = Path(lectura).expanduser()
+                cand = cand if cand.is_absolute() else (ws / cand)
+                if cand.is_file() and _cifrado_en_reposo(cand):
+                    continue
+            except (OSError, ValueError):
+                pass        # no se pudo mirar: sigue siendo una credencial
             fuera.append((lectura, patron))
             continue
         # Una variable de ENTORNO con forma de credencial. `printenv MI_SERVICIO_API_KEY` y
@@ -890,6 +1046,8 @@ def _lecturas_secretas(policy: Policy, ws: Path, lecturas, orden_cruda: str = ""
                 except ValueError:
                     rel = hijo.name
                 p2 = policy.is_secret_path(rel) or policy.is_secret_path(hijo.name)
+                if p2 and hijo.is_file() and _cifrado_en_reposo(hijo):
+                    continue    # el vecino esta cifrado: no delata nada
                 if p2:
                     fuera.append((f"{lectura} (contiene {hijo.name})", p2))
                     break
