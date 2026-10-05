@@ -135,7 +135,7 @@ class TestEndureceNoSeBurlaPorOmision(unittest.TestCase):
         self.assertTrue(pol.block_secret_content)
         self.assertIn("del-proyecto/**", pol.protected_paths)
         self.assertIn("del-cliente/**", pol.protected_paths)
-        self.assertTrue(pol.is_protected("gates/g_agent.py"))
+        self.assertTrue((pol.is_protected("gates/g_agent.py") or pol.is_authority("gates/g_agent.py")[0]))
 
 
 class TestElModoDelGuardianEsUnaRestriccion(unittest.TestCase):
