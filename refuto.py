@@ -2844,7 +2844,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ch = sub.add_parser("chat", help="abre una sesión interactiva con las protecciones puestas")
     ch.add_argument("--agent", default="claude",
-                    choices=["claude", "kiro", "gemini", "opencode"])
+                    choices=["claude", "codex", "kiro", "gemini", "opencode"])
     ch.add_argument("--role", default="", help="rol del registro; carga su contrato en la sesión")
     ch.add_argument("--spec", default="", help="especificación activa, si hay varias")
     ch.add_argument("--task", default="", help="número de issue: carga su contexto y su rol")

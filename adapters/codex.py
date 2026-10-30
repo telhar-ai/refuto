@@ -54,7 +54,7 @@ class CodexAdapter(AgentSpec):
         Se lee UNA línea y se mata el proceso: el servidor responde el `initialize` antes de
         hacer nada más, así que esperar más sería pagar por información que ya está.
         """
-        argv = [path, "mcp-server"]
+        argv = [path, "app-server"]
         try:
             proc = subprocess.Popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

@@ -58,6 +58,9 @@ from core.proc import euid, force_utf8_io
 #: de escritura no figure queda fuera de esta comprobación, y decirlo es parte del contrato —
 #: es la diferencia entre un PASS de alcance declarado y uno universal que nadie midió.
 _ESCRITURA = {
+    # Codex escribe ficheros con `apply_patch`, no con `Write`. Declararla aquí es lo que
+    # hace que `evaluate` le exija una ruta en vez de aprobarla por no reconocerla.
+    "codex": ("apply_patch", "Write", "Edit", "MultiEdit", "NotebookEdit"),
     "claude": ("Write", "Edit", "MultiEdit", "NotebookEdit"),
     "kiro": ("fs_write", "fsWrite"),
     "gemini": ("write_file", "replace", "edit"),
@@ -65,6 +68,18 @@ _ESCRITURA = {
 }
 
 _SHAPES = {
+    # `codex` — medido el 2026-10-30 contra Codex 0.166.0. Su carga de `PreToolUse` es
+    # ISOMORFA a la de Claude Code (mismas claves, mismo anidamiento) y entiende la misma
+    # respuesta `hookSpecificOutput`. Lo único propio es `apply_patch`: ver `_ESCRITURA` y
+    # `_rutas_apply_patch`.
+    "codex": {
+        "tool": ("tool_name",),
+        "path": ("tool_input.file_path", "tool_input.path", "tool_input.notebook_path"),
+        "content": ("tool_input.content", "tool_input.new_string", "tool_input.new_source"),
+        "command": ("tool_input.command",),
+        "cwd": ("cwd",),
+        "structured": True,
+    },
     "claude": {
         "tool": ("tool_name",),
         "path": ("tool_input.file_path", "tool_input.path", "tool_input.notebook_path"),
@@ -184,6 +199,37 @@ def _campo(doc: dict, keys) -> tuple[str, bool]:
     return "", visto_inservible
 
 
+_APPLY_PATCH_DIRECTIVAS = ("*** Add File:", "*** Update File:",
+                           "*** Delete File:", "*** Move to:")
+
+
+def _rutas_apply_patch(texto: str) -> list:
+    """Los ficheros que toca un sobre de `apply_patch`, en orden y sin repetir.
+
+    El sobre es texto plano, una directiva por línea:
+
+        *** Begin Patch
+        *** Add File: ruta/al/fichero
+        +contenido
+        *** End Patch
+
+    `*** Move to:` se incluye porque un renombrado ESCRIBE en el destino: mover algo a una
+    ruta protegida es escribir en ella, y no contarlo deja abierta la misma puerta por otro
+    verbo. Una línea sin ruta se ignora aquí y reaparece como ruta ausente en `evaluate`,
+    que es quien sabe que una herramienta de escritura sin ruta no se aprueba.
+    """
+    rutas = []
+    for linea in (texto or "").splitlines():
+        linea = linea.strip()
+        for d in _APPLY_PATCH_DIRECTIVAS:
+            if linea.startswith(d):
+                r = linea[len(d):].strip()
+                if r and r not in rutas:
+                    rutas.append(r)
+                break
+    return rutas
+
+
 def normalize(runtime: str, payload: dict) -> dict:
     """Carga del gancho → hecho canónico. Sin esto, cada runtime traería su propia política.
 
@@ -227,7 +273,15 @@ def normalize(runtime: str, payload: dict) -> dict:
         # los campos que conocemos están ausentes —no ilegibles— y ausente es legítimo.
         "escribe": campos["tool"][0] in _ESCRITURA.get(runtime, ()),
         "tool": campos["tool"][0],
-        "path": campos["path"][0],
+        # `apply_patch` no trae ruta: la trae DENTRO del sobre, en `command`. Sin esto el
+        # hecho sale sin ruta y una herramienta de escritura sin ruta se aprobaba.
+        "path": (_rutas_apply_patch(campos["command"][0])[:1] or [campos["path"][0]])[0]
+                if campos["tool"][0] == "apply_patch" else campos["path"][0],
+        # TODOS los destinos. Un solo sobre puede tocar varios ficheros y basta con que UNO
+        # esté protegido para que la operación entera no se apruebe.
+        "paths": (_rutas_apply_patch(campos["command"][0])
+                  if campos["tool"][0] == "apply_patch"
+                  else ([campos["path"][0]] if campos["path"][0] else [])),
         "content": campos["content"][0],
         "command": campos["command"][0],
         "cwd": campos["cwd"][0],
@@ -273,6 +327,12 @@ def evaluate(policy: Policy, workspace: Path, fact: dict):
     decisiones = []
     if fact["command"]:
         decisiones.append((decide_command(policy, fact["command"], workspace), "command"))
+    for _ruta_extra in fact.get("paths", [])[1:]:
+        # Un sobre de `apply_patch` con varios ficheros: cada destino se evalúa por separado
+        # y la composición se queda con el más restrictivo. Mirar sólo el primero dejaba
+        # pasar un parche cuyo SEGUNDO fichero fuera una ruta protegida.
+        decisiones.append((decide_write(policy, workspace, _ruta_extra, fact["content"]),
+                           "policy/decision"))
     if fact["path"]:
         decisiones.append((decide_write(policy, workspace, fact["path"], fact["content"]),
                            "write"))
@@ -725,6 +785,11 @@ def main(argv: list | None = None) -> int:
         mapping = {ALLOW: "allow", DENY: "deny", ASK: "ask"}
         motivo = decision.reason or "política de refuto"
         nombre = mapping[decision.outcome]
+        if nombre == "ask" and fact["runtime"] == "codex":
+            nombre = "deny"
+            motivo = (f"{motivo}\n\n(Esto requiere la decisión de una persona. Codex no "
+                      f"implementa esa respuesta —la trata como fallo del gancho y ejecuta "
+                      f"igual—, así que aquí se traduce a un bloqueo: ejecútela usted.)")
         if aviso:
             motivo = f"{motivo}\n\n⚠ {aviso}"
             # Un fallo de auditoría no es «todo bien». Con respuesta estructurada el aviso
