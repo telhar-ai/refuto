@@ -24,6 +24,11 @@ usa conexión `mode=ro`, online backup y `quick_check` sobre la copia. No se com
 escribe la base original. Sólo se inspeccionan bases Codex descubiertas en su directorio;
 no se presupone que los otros runtimes usen SQLite.
 
+Los nombres de tabla son identificadores SQL, no valores parametrizables: se delimitan con
+comillas dobles y se duplican las comillas internas. La excepción local B608 de Bandit cubre
+sólo ese recuento; una regresión crea una tabla cuyo nombre contiene comillas y `DROP TABLE`,
+comprueba ambos recuentos sobre la copia y confirma que los bytes originales no cambian.
+
 La proyección analítica omite texto libre, comandos, stdout, stderr, contenido y rutas.
 Los identificadores de sesión se pseudonimizan con SHA-256. Eso no hace anónimos los
 originales ni garantiza que todos los metadatos sean publicables. Un nulo significa

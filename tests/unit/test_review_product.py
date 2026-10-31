@@ -5,6 +5,9 @@ import sqlite3
 import tempfile
 import unittest
 import runpy
+import contextlib
+import io
+from unittest.mock import patch
 
 # The collector is a CLI script, not an installed third-party package.
 _review = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/review_product.py"))
@@ -16,6 +19,30 @@ vector = _review["vector"]
 
 
 class TestReviewProduct(unittest.TestCase):
+    def test_sqlite_snapshot_counts_hostile_identifiers_without_executing_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)/"home"
+            (home/".codex").mkdir(parents=True)
+            original = home/".codex/fixture.sqlite"
+            with sqlite3.connect(original) as db:
+                db.executescript('''CREATE TABLE ordinary(value TEXT);
+                    INSERT INTO ordinary VALUES ('fixture');
+                    CREATE TABLE "odd""name; DROP TABLE ordinary;--"(value TEXT);
+                    INSERT INTO "odd""name; DROP TABLE ordinary;--" VALUES ('fixture');''')
+            before = original.read_bytes()
+            out = Path(tmp)/"review"
+            with patch.object(Path, "home", return_value=home), \
+                    patch.object(_review["telemetry"], "espacios_registrados", return_value={}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                collect(out)
+            results = json.loads((out/"sqlite.private.json").read_text())
+            self.assertEqual(1, len(results))
+            self.assertNotIn("error_type", results[0])
+            self.assertEqual([["ok"]], results[0]["quick_check"])
+            self.assertEqual({"ordinary": 1, 'odd"name; DROP TABLE ordinary;--': 1},
+                             results[0]["table_counts"])
+            self.assertEqual(before, original.read_bytes())
+
     def test_reported_run_is_not_a_conversation_session(self):
         for raw in ({"kind": "policy/decision", "run_id": "orq_fixture"},
                     {"kind": "policy/decision", "run_id": "orq_fixture", "session_id": "native"}):

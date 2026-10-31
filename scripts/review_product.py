@@ -249,7 +249,8 @@ def collect(out):
                     for name, _ in tables:
                         quoted = '"' + name.replace('"', '""') + '"'
                         if dst.execute("SELECT type FROM sqlite_master WHERE name=?", (name,)).fetchone()[0] == 'table':
-                            table_counts[name] = dst.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
+                            # Identificador delimitado, con comillas duplicadas; probado con nombres hostiles.
+                            table_counts[name] = dst.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]  # nosec B608
             sqlite_results.append(dict(original_path=str(path), snapshot=str(dest),
                                        sha256=digest(dest.read_bytes()), schema=tables,
                                        quick_check=integrity, table_counts=table_counts))
