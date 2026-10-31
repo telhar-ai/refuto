@@ -7,6 +7,7 @@ Original paths are retained only in the private manifest. Originals are never wr
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import collections
 import hashlib
 import gzip
@@ -240,8 +241,9 @@ def collect(out):
     for path in sorted((Path.home()/".codex").glob("*.sqlite")):
         dest = snapshots/path.name
         try:
-            with sqlite3.connect(path.as_uri()+"?mode=ro", uri=True, timeout=1) as src:
-                with sqlite3.connect(dest) as dst:
+            # SQLite's transaction context does not close its connection.
+            with closing(sqlite3.connect(path.as_uri()+"?mode=ro", uri=True, timeout=1)) as src, src:
+                with closing(sqlite3.connect(dest)) as dst, dst:
                     src.backup(dst, pages=128, sleep=0.01)
                     tables = dst.execute("SELECT name,sql FROM sqlite_master WHERE type IN ('table','index')").fetchall()
                     integrity = dst.execute("PRAGMA quick_check").fetchall()

@@ -28,6 +28,9 @@ Los nombres de tabla son identificadores SQL, no valores parametrizables: se del
 comillas dobles y se duplican las comillas internas. La excepción local B608 de Bandit cubre
 sólo ese recuento; una regresión crea una tabla cuyo nombre contiene comillas y `DROP TABLE`,
 comprueba ambos recuentos sobre la copia y confirma que los bytes originales no cambian.
+Las conexiones de origen y copia se cierran explícitamente al terminar: el contexto
+transaccional de SQLite por sí solo no libera la conexión. La regresión verifica también
+que ambas conexiones quedan cerradas después del backup.
 
 La proyección analítica omite texto libre, comandos, stdout, stderr, contenido y rutas.
 Los identificadores de sesión se pseudonimizan con SHA-256. Eso no hace anónimos los

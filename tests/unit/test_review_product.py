@@ -24,17 +24,32 @@ class TestReviewProduct(unittest.TestCase):
             home = Path(tmp)/"home"
             (home/".codex").mkdir(parents=True)
             original = home/".codex/fixture.sqlite"
-            with sqlite3.connect(original) as db:
+            with contextlib.closing(sqlite3.connect(original)) as db, db:
                 db.executescript('''CREATE TABLE ordinary(value TEXT);
                     INSERT INTO ordinary VALUES ('fixture');
                     CREATE TABLE "odd""name; DROP TABLE ordinary;--"(value TEXT);
                     INSERT INTO "odd""name; DROP TABLE ordinary;--" VALUES ('fixture');''')
             before = original.read_bytes()
             out = Path(tmp)/"review"
+            connections = []
+            real_connect = sqlite3.connect
+            def capture_connection(*args, **kwargs):
+                conn = real_connect(*args, **kwargs)
+                connections.append(conn)
+                return conn
             with patch.object(Path, "home", return_value=home), \
                     patch.object(_review["telemetry"], "espacios_registrados", return_value={}), \
+                    patch.object(sqlite3, "connect", side_effect=capture_connection), \
                     contextlib.redirect_stdout(io.StringIO()):
                 collect(out)
+            try:
+                self.assertEqual(2, len(connections))
+                for conn in connections:
+                    with self.assertRaises(sqlite3.ProgrammingError):
+                        conn.execute("SELECT 1")
+            finally:
+                for conn in connections:
+                    conn.close()
             results = json.loads((out/"sqlite.private.json").read_text())
             self.assertEqual(1, len(results))
             self.assertNotIn("error_type", results[0])
@@ -81,16 +96,16 @@ class TestReviewProduct(unittest.TestCase):
             doc.write_text("authorization policy deny")
             for _ in range(2):
                 index_corpus(out, [("research", root)])
-            with sqlite3.connect(out/"research.sqlite") as db:
+            with contextlib.closing(sqlite3.connect(out/"research.sqlite")) as db, db:
                 self.assertEqual(1, db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
                 self.assertEqual(1, len(db.execute("SELECT id FROM search WHERE search MATCH 'deny'").fetchall()))
             doc.write_text("replacement evidence")
             index_corpus(out, [("research", root)])
-            with sqlite3.connect(out/"research.sqlite") as db:
+            with contextlib.closing(sqlite3.connect(out/"research.sqlite")) as db, db:
                 self.assertEqual([], db.execute("SELECT id FROM search WHERE search MATCH 'deny'").fetchall())
             doc.unlink()
             index_corpus(out, [("research", root)])
-            with sqlite3.connect(out/"research.sqlite") as db:
+            with contextlib.closing(sqlite3.connect(out/"research.sqlite")) as db, db:
                 self.assertEqual(0, db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
 
     def test_vector_is_repeatable_and_normalized(self):
