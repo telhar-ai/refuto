@@ -184,8 +184,8 @@ class ClaudeAdapter(AgentSpec):
         argv = [self.binary, "--effort", effort]
         if headless:
             argv += ["-p", "--output-format", "stream-json", "--verbose"]
-        if allow_tools:
-            argv += ["--tools", ",".join(allow_tools)]
+        # An empty requested tool set must not expose the runtime's default tools.
+        argv += ["--tools", ",".join(allow_tools)]
         if resume:
             argv += ["--continue"]
         if require_mcp:
@@ -193,6 +193,31 @@ class ClaudeAdapter(AgentSpec):
         if budget_usd is not None:
             argv += ["--max-budget-usd", str(budget_usd)]
         return argv
+
+    def normalize_events(self, raw: dict) -> list[dict]:
+        """Preserve every tool-use block and its original content index.
+
+        This is a metadata projection: tool inputs and message text are omitted.
+        The legacy singular API remains available for external callers.
+        """
+        if raw.get("type") != "assistant":
+            result = super().normalize_events(raw)
+            for event in result:
+                event["session_id"] = raw.get("session_id")
+            return result
+        message = raw.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            return []
+        result = []
+        for index, block in enumerate(content):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                result.append({"source": "claude", "family": "claude-stream-json",
+                               "kind": "tool/call", "source_block": index,
+                               "tool_call_id": block.get("id"), "tool_name": block.get("name"),
+                               "session_id": raw.get("session_id"),
+                               "payload": {"tool": block.get("name"), "id": block.get("id")}})
+        return result
 
     def normalize_event(self, raw: dict) -> dict | None:
         kind = raw.get("type")
@@ -219,6 +244,7 @@ class ClaudeAdapter(AgentSpec):
 
 
 SPEC = ClaudeAdapter(
+    prompt_from_stdin=True,
     name="claude",
     binary="claude",
     version_args=("--version",),

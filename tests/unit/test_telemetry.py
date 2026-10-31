@@ -259,6 +259,18 @@ class TestLecturaDeDiarios(unittest.TestCase):
         rutas = T.diarios([self.base / "espacio", self.base / "espacio"])
         self.assertEqual(1, len(rutas))
 
+    def test_dos_raices_con_el_mismo_nombre_no_se_correlacionan(self):
+        kw = {"entrada_digest": "same", "session_id": "s", "tool_call_id": "c",
+              "_source_id": "producer-spoof"}
+        a = self._diario("a/same-name", [json.dumps(dec(**kw))])
+        b = self._diario("b/same-name", [json.dumps(res(**kw))])
+        eventos = T.leer([a,b])["eventos"]
+        self.assertEqual(eventos[0]["_espacio"],eventos[1]["_espacio"])
+        self.assertNotEqual(eventos[0]["_source_id"],eventos[1]["_source_id"])
+        s = T.resumen(eventos)
+        self.assertEqual(0,s["herramientas_s"]["emparejados"])
+        self.assertEqual(2,len(s["por_fuente"]))
+
 
 class TestResumenVacio(unittest.TestCase):
 

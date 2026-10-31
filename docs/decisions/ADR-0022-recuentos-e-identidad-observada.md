@@ -56,11 +56,19 @@ Documentan el ID de llamada en pre y post; los tests de este repositorio usan es
 contrato en subprocesses del guardián. **No demuestran carga de hooks en sesiones
 nativas ni cobertura universal por versión.**
 
-El lector prioriza `(espacio, runtime, session_id, tool_call_id)` y exige cardinalidad
+El lector prioriza `(fuente, runtime, session_id, tool_call_id)` y exige cardinalidad
 uno a uno. Replays, IDs incompletos o discrepancias de herramienta/entrada no generan
 duraciones. Sin identidad nativa, conserva la correlación conservadora por entrada,
 etiquetada separadamente. `entrada_digest` continúa siendo digest de contenido, nunca
 ID de invocación. Un PostToolUse o exit code cero no verifica un efecto ni aceptación.
+
+La fuente es una huella de la ruta resuelta del diario observado, calculada por el lector
+por encima de cualquier valor aportado por el productor. El nombre visible de un espacio
+no es identidad: dos raíces pueden tener el mismo nombre. Las copias y rotaciones en
+otras rutas permanecen separadas; no se inventa continuidad entre archivos. La huella no
+autentica el contenido ni anonimiza criptográficamente una ruta de baja entropía. Quien
+llame directamente a `resumen` sin `leer` conserva el ámbito legado `_espacio`: esa API
+no puede demostrar separación de fuentes que no recibió.
 
 ## Lo que no queda implementado
 

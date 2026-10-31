@@ -184,10 +184,19 @@ class CodexAdapter(AgentSpec):
 
     def run_argv(self, *, prompt_file: Path, allow_tools: list, effort: str,
                  stream: bool = True, resume: bool = False, budget_usd=None,
+                 headless: bool = True, require_mcp: bool = False,
                  strict_mcp: bool = False, schema: Path | None = None) -> list:
         """`codex exec` es la superficie no interactiva. `--json` emite JSONL de eventos."""
-        argv = [self.binary, "exec", "--sandbox", "workspace-write",
-                "--ask-for-approval", "on-request"]
+        if not headless:
+            raise ValueError("Codex run_argv supports headless exec only")
+        if require_mcp or strict_mcp:
+            raise ValueError("Codex does not provide the required strict MCP startup contract")
+        if budget_usd is not None:
+            raise ValueError("Codex does not enforce a native USD budget")
+        if allow_tools:
+            raise ValueError("Codex does not enforce the requested native tool allowlist")
+        argv = [self.binary, "--ask-for-approval", "on-request", "exec",
+                "--sandbox", "workspace-write"]
         if stream:
             argv += ["--json"]
         if schema is not None:
@@ -235,6 +244,7 @@ def _servidores_mcp_consumidos(path: str) -> list:
 
 
 SPEC = CodexAdapter(
+    prompt_from_stdin=True,
     name="codex",
     binary="codex",
     version_args=("--version",),
