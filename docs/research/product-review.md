@@ -31,13 +31,21 @@ desconocido, omitido o extracción no soportada; **no demuestra ausencia en orig
 
 ## Contrato analítico
 
-`refuto.review.event/v1` es una proyección forense independiente del contrato del producto.
+`refuto.review.event/v2` es una proyección forense independiente del contrato del producto.
 `FIELDS` en el script enumera sus columnas. No promete completar el ADR-0009.
+
+La versión 2 retira el respaldo de `session_id` desde `run_id`: una ejecución reportada no
+es una sesión conversacional. Conserva el valor explícito por separado como
+`reported_run_id`, pseudonimizado y sin atribuirle semántica universal de invocación o tarea.
+Las sesiones sólo proceden de sus campos explícitos (o del payload nativo session_meta).
+Los datasets anteriores se conservan y se reprocesan desde copias con hash verificado
+en otro destino; no se parchean silenciosamente las filas históricas.
 
 | Campos | Semántica |
 |---|---|
 | `event_id`, `evidence_reference` | SHA-256 de la copia y línea; identidad del registro, no de una operación |
 | `session_id`, `parent_event_id`, `tool_call_id` | IDs explícitos pseudonimizados; no se enlazan por proximidad |
+| `reported_run_id` | `run_id` explícito pseudonimizado; no sustituye sesión, tarea ni invocación |
 | `runtime`, `runtime_version`, `raw_type` | Etiqueta de fuente o dato explícito; versión normalmente desconocida |
 | `timestamp` | Marca original; no se corrigen relojes ni se inventa causalidad |
 | `decision`, `policy_digest`, `input_digest` | Datos del diario del guardián; decisión no equivale a efecto |

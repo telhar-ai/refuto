@@ -16,6 +16,17 @@ vector = _review["vector"]
 
 
 class TestReviewProduct(unittest.TestCase):
+    def test_reported_run_is_not_a_conversation_session(self):
+        for raw in ({"kind": "policy/decision", "run_id": "orq_fixture"},
+                    {"kind": "policy/decision", "run_id": "orq_fixture", "session_id": "native"}):
+            with self.subTest(explicit_session="session_id" in raw):
+                e = normalize(raw, "ledger", "fixture", 1)
+                self.assertEqual("refuto.review.event/v2", e["schema"])
+                self.assertIsNotNone(e["reported_run_id"])
+                self.assertEqual("session_id" not in raw, e["session_id"] is None)
+                self.assertNotEqual(e["session_id"], e["reported_run_id"])
+                self.assertNotIn("orq_fixture", json.dumps(e))
+
     def test_private_output_cannot_enter_public_checkout(self):
         for operation in (collect, lambda p: index_corpus(p, [])):
             with self.assertRaises(ValueError):

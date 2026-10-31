@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from core import telemetry  # noqa: E402
 
-SCHEMA = "refuto.review.event/v1"
+SCHEMA = "refuto.review.event/v2"
 PRIVACY_PATTERNS = {
     "token_shape": rb"\b(?:AKIA[A-Z0-9]{16}|sk-[A-Za-z0-9_-]{20,})\b",
     "private_key": rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
@@ -32,7 +32,7 @@ PRIVACY_PATTERNS = {
     "home_path": rb"/(?:Users|home)/[^/\s\"']+",
     "bearer_shape": rb"(?i)Bearer\s+[A-Za-z0-9._~-]{16,}",
 }
-FIELDS = "event_id session_id trace_id parent_event_id runtime runtime_version model tool_name tool_call_id timestamp task_id project_id repository branch decision permission_state hook_result exit_code stdout stderr duration token_usage cost retry_count error_type human_intervention artifact_reference commit_reference test_result effect_observed evidence_reference".split()
+FIELDS = "event_id session_id trace_id parent_event_id runtime runtime_version model tool_name tool_call_id reported_run_id timestamp task_id project_id repository branch decision permission_state hook_result exit_code stdout stderr duration token_usage cost retry_count error_type human_intervention artifact_reference commit_reference test_result effect_observed evidence_reference".split()
 
 
 def digest(value):
@@ -50,8 +50,9 @@ def normalize(raw, runtime, source, line):
     row.update(schema=SCHEMA, event_id=f"{source}:{line}", runtime=runtime,
                evidence_reference={"sha256": source, "line": line},
                timestamp=raw.get("ts") or raw.get("timestamp"),
-               session_id=ident(raw.get("sessionId") or raw.get("session_id") or raw.get("run_id")),
+               session_id=ident(raw.get("sessionId") or raw.get("session_id")),
                parent_event_id=ident(raw.get("parentUuid")),
+               reported_run_id=ident(raw.get("run_id")),
                tool_name=raw.get("tool"),
                raw_type=raw.get("kind") or raw.get("type"),
                tool_call_id=ident(raw.get("tool_call_id") or p.get("call_id")))
