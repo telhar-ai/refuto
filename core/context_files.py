@@ -43,13 +43,26 @@ from pathlib import Path
 #: el nombre del producto cambia; el formato de datos compartido, no.
 INICIO = "<!-- harness:inicio · generado por `refuto install`; no editar dentro -->"
 FIN = "<!-- harness:fin -->"
-BLOQUE = re.compile(re.escape(INICIO) + r".*?" + re.escape(FIN), re.S)
+#: El marcador de antes del renombrado `harness` → `refuto`. Se compara literal, así que al
+#: cambiar el nombre el bloque viejo dejó de reconocerse: en vez de REEMPLAZARSE quedó
+#: HUÉRFANO, con el nuevo escrito debajo. Medido el 2026-10-30 en el espacio telhar: 22 956 B
+#: duplicados en `AGENTS.md` y `GEMINI.md` que además CONTRADECÍAN al bloque vigente, y que
+#: un agente lee de arriba abajo y se cree. `CLAUDE.md` se salvó por usar importación `@`;
+#: es decir, el defecto sólo golpeaba a los agentes que nadie estaba usando.
+#: Reconocer ambos nombres es lo que hace que el próximo renombrado no vuelva a duplicar.
+INICIO_HEREDADO = "<!-- harness:inicio · generado por `harness install`; no editar dentro -->"
+_CUALQUIER_INICIO = "(?:" + re.escape(INICIO) + "|" + re.escape(INICIO_HEREDADO) + ")"
+BLOQUE = re.compile(_CUALQUIER_INICIO + r".*?" + re.escape(FIN), re.S)
 
 DOC = ".harness/CONTEXTO.md"
 
 #: Dónde deja cada runtime su contexto de proyecto, y si admite importación por referencia.
 TARGETS = {
     "claude":   {"file": "CLAUDE.md", "import": True},
+    # Codex lee `AGENTS.md`, el mismo fichero que opencode. Sin esta entrada, refrescarle el
+    # contexto exigía pasar `--agent opencode`, que es pedirle al operador que sepa un
+    # detalle de implementación para que su agente no lea datos viejos.
+    "codex":    {"file": "AGENTS.md", "import": False},
     "opencode": {"file": "AGENTS.md", "import": False},
     "gemini":   {"file": "GEMINI.md", "import": False},
 }

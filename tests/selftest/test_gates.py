@@ -104,8 +104,15 @@ class TestGatePolicy(GateCase):
             ws.manifest(agents={"claude": {"required": True}})
             ruta = ws.policy(protected_paths=[], secret_read_deny=[])
             efectiva = _P.load(ruta)
-            self.assertTrue(efectiva.is_protected("gates/g_agent.py"))
-            self.assertTrue(efectiva.is_protected("repo-hijo/gates/g_agent.py"))
+            # El efectivo tiene DOS vocabularios y preguntar por uno no mide la union.
+            # `is_protected` solo consulta `protected_paths`; desde el 2026-10-05 las palabras
+            # comunes de gobierno viven en `authority_paths`. La sonda de profundidad usa un
+            # nombre que el arnes RESERVA —`.harness/`, cuyo vocabulario no cambio—, porque una
+            # palabra comun en un hijo sin `.harness/` no es gobierno bajo el modelo y afirmarlo
+            # aqui seria volver a pedir la regla que dejaba inescribible el codigo del producto.
+            self.assertTrue(efectiva.is_protected("gates/g_agent.py")
+                            or efectiva.is_authority("gates/g_agent.py")[0])
+            self.assertTrue(efectiva.is_protected("repo-hijo/.harness/policy.json"))
             self.assertTrue(efectiva.is_protected(".harness/policy.json"))
 
     def test_entrada_corrupta(self):

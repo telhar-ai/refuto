@@ -643,6 +643,20 @@ def _derivar_segmento(segmento: str) -> Efectos:
         if programa == "find":
             accion = next((t for t in resto if t in _FIND_ACCIONES), "")
             if accion:
+                # Lo que `find` ejecute no se deriva; DÓNDE puede hacerlo, sí. Las raíces son
+                # los tokens anteriores a la primera opción (`find <rutas…> <expresión>`), y
+                # el daño queda acotado a ellas. Declararlas escrituras probables hace que la
+                # protección de rutas —que ya existe y funciona— se aplique sola, sin subir
+                # `NO_RESOLUBLE` a consulta, que serían el 53 % de las decisiones.
+                #
+                # Medido el 2026-10-30, antes de esto: `find /tmp/x -delete` salía ALLOW y
+                # borraba fuera del espacio de trabajo.
+                raices = []
+                for t in resto:
+                    if t.startswith("-"):
+                        break
+                    raices.append(t)
+                ef.escrituras.update(raices or ["."])
                 ef.declarar(NO_RESOLUBLE,
                             f"«find {accion}» ejecuta una acción sobre cada coincidencia: lo "
                             f"que escriba o borre no se deriva de los argumentos de `find`, "

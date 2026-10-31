@@ -38,6 +38,10 @@ MARK = "harness-guard"
 #: `python3 -m core.guard`, así que declaraba 0/5 enganchados justo después de engancharlos.
 #: Un chequeo que no comprueba lo que cree es peor que no tenerlo.
 GUARD_MODULE = "core.guard"
+
+#: El directorio del arnes dentro del espacio, derivado de `launcher.BIN`
+#: (".harness/bin") para que no haya dos sitios que digan donde vive.
+HARNESS_DIR = launcher.BIN.split("/", 1)[0]
 GUARD_LAUNCHER = ".harness/bin/guard"
 
 #: Lo que `_instalar_lanzador` reporta como ruta tocada. Es el mismo fichero que
@@ -321,12 +325,22 @@ def wire_claude_repos(workspace: Path, *, harness_root: Path, dry_run: bool = Fa
     # los reclame. Un punto de entrada probado por el uso es tan real como uno deducido de la
     # estructura. Medido en un espacio real: 23 de los 136 puntos eran de esta clase, y
     # recorrer sólo repositorios los dejaba fuera.
-    for c in workspace.glob("*/.claude"):
-        if c.is_dir() and c.parent != workspace:
-            destinos.add(c.parent)
-    for c in workspace.glob("*/*/.claude"):
-        if c.is_dir():
-            destinos.add(c.parent)
+    #
+    # Con una excepcion: el area del propio arnes. `.harness/` esta en `protected_paths`, asi
+    # que `decide_write` DENIEGA escribir ahi — y `.harness/backup/.claude/` existe porque el
+    # arnes respalda ajustes, no porque alguien abriera una sesion. Sin este filtro el plan
+    # incluia un destino que la politica del mismo espacio rechaza: una orden que se propone a
+    # si misma una escritura imposible. Medido el 2026-10-04 en telhar, 1 destino de 111.
+    for patron in ("*/.claude", "*/*/.claude"):
+        for c in workspace.glob(patron):
+            if not c.is_dir():
+                continue
+            destino = c.parent
+            if destino == workspace:
+                continue
+            if HARNESS_DIR in destino.relative_to(workspace).parts:
+                continue
+            destinos.add(destino)
 
     for destino in sorted(destinos):
         out.extend(_enganchar_en(destino, workspace, dry_run=dry_run))

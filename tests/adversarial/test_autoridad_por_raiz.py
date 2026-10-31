@@ -303,7 +303,12 @@ class TestJ_UnaPoliticaLocalNoAnulaLaSuperior(unittest.TestCase):
                                        "version": "1",
                                        "authority_paths": ["solo-esto/**"]}))
             self.assertEqual(DENY, decide_write(pol, ws.root, "policies/base.json").outcome)
-            self.assertEqual(["policies/**", "solo-esto/**"], sorted(pol.authority_paths))
+            # El efectivo se DERIVA de la norma, no se repite a mano. Repetirla es como esta
+            # prueba se puso en rojo al anclar las palabras comunes el 2026-10-05: afirmaba la
+            # lista de ayer, no la propiedad de union que es lo que se esta probando.
+            self.assertEqual(sorted(set(DEFAULT_AUTHORITY) | {"solo-esto/**"}),
+                             sorted(pol.authority_paths),
+                             "el efectivo no es la UNION: `ACUMULA` no se aplico")
 
     def test_pero_añadir_los_suyos_si_funciona_y_se_hereda(self):
         """La dirección reparable: un cliente declara SU gobierno y el proyecto no lo retira."""

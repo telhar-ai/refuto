@@ -114,7 +114,43 @@ def _selftest(copia: Path, *, timeout: float = 1800.0) -> dict:
         return {"ok": False, "codigo": None, "resumen": f"la suite no terminó en {timeout:g} s"}
     salida = ((p.stdout or "") + (p.stderr or "")).strip().splitlines()
     return {"ok": p.returncode == 0, "codigo": p.returncode,
-            "resumen": salida[-1].strip() if salida else "(sin salida)"}
+            "resumen": _resumen_de_suite(salida)}
+
+
+#: Lineas de la salida de `unittest` que SI dicen por que fallo, en orden de preferencia.
+_VEREDICTO = ("FAILED (", "OK (", "Ran ")
+
+
+def _resumen_de_suite(salida: list) -> str:
+    """El veredicto de la suite, no su ULTIMA linea.
+
+    El defecto que esto cierra, medido el 2026-10-05
+    ------------------------------------------------
+    `resumen` era `salida[-1]`, y la ultima linea de ESTA suite no es el veredicto: las pruebas
+    de conformidad imprimen su propia tabla, y la ultima que corre (`T21`) deja escrito
+
+        DECISION: DENY (Desvio y fuga neutralizados)
+
+    que es el resultado ESPERADO de un ataque simulado. El publicador lo mostraba como motivo
+    del fallo, asi que una publicacion rechazada decia «la copia no se prueba a si misma: DENY
+    (Desvio y fuga neutralizados)» — una frase que no nombra ninguna prueba roja y que apunta al
+    guardian, que no tenia nada que ver. Observado dos veces seguidas sobre dos commits
+    distintos, y en las dos la causa real eran pruebas en rojo que el motivo no mencionaba.
+
+    Un rechazo que no nombra su causa obliga a repetir una suite de ~14 minutos para averiguarla.
+    Se devuelven las lineas que `unittest` escribe como veredicto, y las primeras cabeceras
+    `FAIL:`/`ERROR:`, que son las que dicen QUE prueba cayo.
+    """
+    if not salida:
+        return "(sin salida)"
+    veredicto = [ln.strip() for ln in salida
+                 if any(ln.strip().startswith(m) for m in _VEREDICTO)]
+    rojas = [ln.strip() for ln in salida
+             if ln.startswith(("FAIL:", "ERROR:"))]
+    partes = veredicto[-2:] + rojas[:3]
+    if len(rojas) > 3:
+        partes.append(f"(+{len(rojas) - 3} mas)")
+    return " · ".join(partes) if partes else salida[-1].strip()
 
 
 def publicar(repo: Path, *, commit: str = "HEAD", verificar: bool = True,

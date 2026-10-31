@@ -52,8 +52,33 @@ def _cargar():
 check_wiring = _cargar()
 
 
+def _hay_git() -> bool:
+    """¿El árbol de esta copia es un repositorio git?
+
+    No siempre lo es, y eso NO es un defecto: `core.engine.publicar` materializa el motor con
+    `git archive`, así que la copia que se prueba a sí misma antes de gobernar a nadie **no
+    tiene `.git`**. Lo descubrió el propio `engine publish`, que se negó a publicar porque dos
+    de estas pruebas fallaban ahí — en CI pasaban, porque CI es un `checkout`.
+
+    Donde no hay git, la propiedad no es falsa: es **no medible**. Se declara `NOT_RUN` con su
+    motivo en vez de fallar, que es el mismo trato que reciben las pruebas que necesitan
+    `HICON_BIN`. Y el arreglo de `check_wiring` sigue siendo correcto ahí: sin git el conjunto
+    de ignorados es vacío y el control mide el árbol entero, que es lo que debe hacer.
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(RAIZ), "rev-parse", "--git-dir"],
+                           capture_output=True)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+SIN_GIT = "no es un repositorio git (p. ej. la copia que `engine publish` extrae con git archive)"
+
+
 class TestLoIgnoradoNoCuenta(unittest.TestCase):
 
+    @unittest.skipUnless(_hay_git(), SIN_GIT)
     def test_el_conjunto_de_ignorados_se_mide_de_git(self):
         ign = check_wiring._ignorados_por_git()
         self.assertIsInstance(ign, set)
@@ -65,6 +90,7 @@ class TestLoIgnoradoNoCuenta(unittest.TestCase):
                          "`artifacts/harness/` ya no está ignorado: la evidencia local se "
                          "publicaría y este control volvería a medirla")
 
+    @unittest.skipUnless(_hay_git(), SIN_GIT)
     def test_un_modulo_huerfano_IGNORADO_no_se_reporta(self):
         """El caso exacto que rompía el pre-push."""
         rel = "artifacts/harness/_sonda_huerfana_de_prueba.py"

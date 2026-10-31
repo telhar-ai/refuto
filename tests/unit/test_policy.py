@@ -41,9 +41,18 @@ class TestProteccionDeRutas(unittest.TestCase):
 
     # ── negativos: uno por cosa que hay que proteger ─────────────────────────────────
     def test_protege_el_juez(self):
-        self.deny("verificacion/v1_tokens.py", rule="**/verificacion/**")
-        self.deny("verification/gate.py", rule="**/verification/**")
-        self.deny("gates/g_agent.py", rule="**/gates/**")
+        """Las palabras comunes se citan por su patron ANCLADO (`authority_paths`).
+
+        Hasta el 2026-10-05 el motivo era `**/verificacion/**`, que cubria cualquier directorio
+        con ese nombre a cualquier profundidad — incluido el codigo del producto. Ahora se
+        comparan contra la ruta relativa a cada raiz de autoridad, y la raiz del espacio cuenta
+        siempre, asi que la proteccion de la RAIZ es la misma; lo que cambia es el patron que la
+        nombra. La cobertura en profundidad se prueba en
+        `tests/adversarial/test_nombres_comunes_anclados.py`.
+        """
+        self.deny("verificacion/v1_tokens.py", rule="verificacion/**")
+        self.deny("verification/gate.py", rule="verification/**")
+        self.deny("gates/g_agent.py", rule="gates/**")
 
     def test_protege_steering(self):
         """`str.lstrip('./')` quita CARACTERES, no un prefijo: `.kiro/...` se convertía en
@@ -52,9 +61,9 @@ class TestProteccionDeRutas(unittest.TestCase):
         self.deny("./.kiro/steering/diseno.md", rule="**/.kiro/steering/**")
 
     def test_protege_la_evidencia_y_los_insumos(self):
-        self.deny("evidencia/informe.json", rule="**/evidencia/**")
-        self.deny("evidence/run.json", rule="**/evidence/**")
-        self.deny("insumos/02-historias/HU-01.md", rule="**/insumos/**")
+        self.deny("evidencia/informe.json", rule="evidencia/**")
+        self.deny("evidence/run.json", rule="evidence/**")
+        self.deny("insumos/02-historias/HU-01.md", rule="insumos/**")
 
     def test_protege_los_locks_y_la_propia_politica(self):
         self.deny(".nucleo.lock.json")
@@ -72,11 +81,30 @@ class TestProteccionDeRutas(unittest.TestCase):
         for hijo in ("repo-hijo", "a/b/repo-nieto"):
             self.deny(f"{hijo}/.harness/bin/guard", rule="**/.harness/**")
             self.deny(f"{hijo}/.harness/policy.json", rule="**/.harness/**")
-            self.deny(f"{hijo}/evidence/run.json", rule="**/evidence/**")
-            self.deny(f"{hijo}/gates/g.py", rule="**/gates/**")
             self.deny(f"{hijo}/harness.manifest.json", rule="**/harness.manifest.json")
             self.deny(f"{hijo}/algo.lock.json", rule="**/*.lock.json")
             self.deny(f"{hijo}/.kiro/steering/m.md", rule="**/.kiro/steering/**")
+
+    def test_la_palabra_comun_en_un_hijo_NO_GOBERNADO_no_se_protege(self):
+        """La contraparte exacta del cambio del 2026-10-05, afirmada y no escondida.
+
+        Hasta esa fecha `**/evidence/**` denegaba `<cualquier-ruta>/evidence/**`, y por eso este
+        caso vivia en la prueba de profundidad de arriba. Era la misma regla que dejaba
+        inescribible el codigo del producto, y el espacio no podia retirarla.
+
+        Ahora la palabra comun se compara contra cada RAIZ DE AUTORIDAD. Un hijo sin `.harness/`
+        no es raiz de autoridad: bajo el modelo, refuto no es el juez ahi, asi que su
+        `evidence/` es un directorio cualquiera. El caso que SI se deniega —el hijo que trae su
+        propio `.harness/`, que es el agujero del 2026-09-24— se prueba en
+        `tests/adversarial/test_nombres_comunes_anclados.py::TestB`, con arbol de verdad en
+        disco; aqui el espacio no existe y no hay raiz que detectar.
+
+        Lo que un espacio pierde por esto lo devuelve con una linea en `authority_paths`, que es
+        `ACUMULA` y por tanto la direccion que la herencia permite. Es el error reparable.
+        """
+        for hijo in ("repo-hijo", "a/b/repo-nieto"):
+            self.allow(f"{hijo}/evidence/run.json")
+            self.allow(f"{hijo}/gates/g.py")
 
     def test_la_memoria_del_agente_es_escribible_a_cualquier_profundidad(self):
         """La contraparte, y sin ella lo de arriba se satisface denegando todo.
@@ -96,8 +124,8 @@ class TestProteccionDeRutas(unittest.TestCase):
 
     def test_normaliza_antes_de_comparar(self):
         """`a/../b` tiene que compararse como `b`. Sin normalizar, el patrón se sortea."""
-        self.deny("verificacion/../verificacion/v3.py", rule="**/verificacion/**")
-        self.deny("app/../verificacion/comun.py", rule="**/verificacion/**")
+        self.deny("verificacion/../verificacion/v3.py", rule="verificacion/**")
+        self.deny("app/../verificacion/comun.py", rule="verificacion/**")
 
     def test_bloquea_secretos_en_el_contenido(self):
         """Lo que tiene FORMA de credencial se rechaza sin preguntar."""
