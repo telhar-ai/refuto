@@ -130,12 +130,23 @@ class CodexAdapter(AgentSpec):
         `--ask-for-approval` obliga a confirmar antes de ejecutar una orden. Las dos se
         comprobaron en `codex --help --all` de 0.151.0.
 
-        Lo que NO aplica, y se declara: Codex 0.151 **tiene** un sistema de ganchos —consta
-        `--dangerously-bypass-hook-trust`, que sólo tiene sentido si hay ganchos con confianza
-        persistida— pero **el formato de su configuración no está documentado en el CLI y no se
-        ha verificado**. Mientras no se verifique, la guardia de contenido en Codex se considera
-        NO aplicada. Declararla aplicada porque «probablemente hay hooks» sería exactamente el
-        verde falso que refuto rechaza.
+        Los ganchos: lo que antes decía esto, y por qué ya no
+        ------------------------------------------------------
+        Hasta el 2026-10-31 aquí constaba que el formato de configuración de los ganchos «no
+        está documentado en el CLI y no se ha verificado», y de ahí que la guardia de
+        contenido se declarase NO aplicada. **Ya está verificado**, contra 0.166.0: los
+        ganchos se declaran en `<espacio>/.codex/hooks.json` —o por bandera de sesión con
+        `-c hooks.PreToolUse=[…]`—, su confianza se persiste en `[hooks.state]` de
+        `config.toml`, y el guardián de refuto responde `PreToolUse` en el dialecto de Codex
+        (`core/dialect.py`). Medido con efecto observable: un `deny` impide que la orden se
+        ejecute.
+
+        Lo que sigue sin aplicar, y **esto** es lo que mantiene la fila en `unenforceable`:
+        `compile_policy` no ESCRIBE ese `hooks.json`. Refuto no tiene `wire_codex` —sólo
+        `wire_claude`, `wire_kiro_agents` y `wire_antigravity`—, así que el gancho lo
+        instala hoy una persona. Un espacio con Codex sin ese fichero no tiene guardián por
+        mucho que el guardián sepa hablar su dialecto, y declarar la guardia aplicada porque
+        el protocolo está resuelto sería el mismo verde falso de antes con otra excusa.
         """
         modo = "workspace-write" if policy.protected_paths else "read-only"
         doc = {
@@ -148,10 +159,10 @@ class CodexAdapter(AgentSpec):
                       "para el operador; NO las aplica el agente."),
         }
         unenforceable = [
-            "guardia de contenido (secretos, datos personales) antes de escribir: Codex 0.151 "
-            "tiene ganchos (consta --dangerously-bypass-hook-trust) pero el formato de su "
-            "configuración NO está documentado ni verificado; mientras no se verifique, se "
-            "considera NO aplicada",
+            "guardia de contenido (secretos, datos personales) antes de escribir: el gancho "
+            "`PreToolUse` de Codex SÍ está verificado (0.166.0) y el guardián responde su "
+            "dialecto, pero `compile_policy` no escribe `.codex/hooks.json` y refuto no "
+            "tiene `wire_codex`: lo instala una persona. Hasta que lo haga, no está aplicada",
             "protección por ruta DENTRO del espacio de trabajo: el sandbox `workspace-write` "
             "concede el espacio entero; no hay lista de rutas protegidas que compilar",
             f"denegación de órdenes ({len(policy.command_deny)} patrones): se cubre con "
