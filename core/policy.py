@@ -1739,12 +1739,16 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
         #    en rojo el camino correcto, que es como se desactiva un control.
         clas = PRIV.clasificar(cmd)
         normalizado = PRIV.forma_normalizada(cmd)
+        # Una vez por orden, no por patrón: con 21 rechazos y 8 consultas se recalcularía 29
+        # veces lo mismo. Se comparan sólo contra patrones; nunca se ejecutan.
+        candidatas = _formas_sin_opciones_globales(cmd)
         if clas.tipo == PRIV.INDETERMINADO:
             indeterminados.append((cmd, clas.motivo))
         for pattern in policy.command_deny:
             if _patron_de_elevacion(pattern) and clas.tipo == PRIV.BAJA:
                 continue            # una regla de elevación no habla de una cesión de privilegio
-            if _matches_command(cmd, pattern) or _matches_command(normalizado, pattern):
+            if (_matches_command(cmd, pattern) or _matches_command(normalizado, pattern)
+                    or any(_matches_command(f, pattern) for f in candidatas)):
                 # La excepción NOMBRADA va antes del rechazo, igual que `writable_paths` va antes
                 # de `protected_paths`: evaluada después nunca podría ganarle. Ver `core/grants.py`.
                 #
@@ -1778,7 +1782,8 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
             for pattern in policy.command_ask:
                 if _patron_de_elevacion(pattern) and clas.tipo == PRIV.BAJA:
                     continue
-                if _matches_command(cmd, pattern) or _matches_command(normalizado, pattern):
+                if (_matches_command(cmd, pattern) or _matches_command(normalizado, pattern)
+                        or any(_matches_command(f, pattern) for f in candidatas)):
                     peor_ask = Decision(ASK, rule=pattern,
                                         reason=f"«{pattern}» sale del repositorio o cambia algo "
                                                f"remoto: lo decide una persona.", **marca)
@@ -1901,6 +1906,42 @@ def _patron_de_elevacion(pattern: str) -> bool:
     # Sólo `ELEVA` califica. `BAJA` describe una cesión CONCRETA —y de ésas el patrón sí puede
     # hablar—; `NINGUNO` (`rm -rf:*`) e `INDETERMINADO` no son reglas de privilegio en absoluto.
     return clasificar(pattern.split(":", 1)[0].strip()).eleva
+
+
+def _formas_sin_opciones_globales(cmd: str) -> tuple:
+    """La orden sin las opciones GLOBALES que van entre el programa y su subcomando.
+
+    `git -C /tmp/r push` significa `git push` en otro directorio. El patrón `git push:*`
+    habla del SIGNIFICADO, no de la ortografía, y sin esto no lo alcanzaba.
+
+    Devuelve varias candidatas porque no se sabe si una opción corta consume el token
+    siguiente: `-C /tmp/r` sí, `-P` no. Se generan las dos lecturas y basta que UNA case —
+    un guardián que duda entre dos lecturas de una orden peligrosa no se queda con la
+    cómoda. El coste de la lectura de más es nulo: las candidatas sólo se comparan contra
+    patrones, nunca se ejecutan.
+
+    Sólo se exploran tokens que empiezan por `-` y SÓLO hasta el primero que no lo hace, así
+    que `git log --grep=push` no genera `git push`: `log` corta ahí.
+    """
+    toks = cmd.split()
+    if len(toks) < 3:
+        return ()
+    formas, pendientes, vistos = [], [(1, False)], set()
+    while pendientes and len(formas) < 8:
+        i, consumio = pendientes.pop()
+        if i >= len(toks) or i > 6:            # cota: nadie encadena 6 opciones globales
+            continue
+        if not toks[i].startswith("-"):
+            if consumio:                        # hubo algo que quitar: es una forma nueva
+                f = " ".join([toks[0]] + toks[i:])
+                if f not in vistos and f != cmd:
+                    vistos.add(f)
+                    formas.append(f)
+            continue
+        pendientes.append((i + 1, True))        # la opción no consume el token siguiente
+        if "=" not in toks[i]:
+            pendientes.append((i + 2, True))    # …o sí lo consume
+    return tuple(formas)
 
 
 def _matches_command(cmd: str, pattern: str) -> bool:
