@@ -141,6 +141,24 @@ def cmd_doctor(opts) -> int:
         checks.append((label, path.is_file(), str(path) if path.is_file() else
                        (f"falta — ejecute `{arreglo}`" if arreglo else "falta")))
 
+    # Concesiones mal formadas. `problemas_declarados` existía desde que nace `core/grants.py`
+    # y NADIE la llamaba fuera de las pruebas, que es el defecto que su propia docstring
+    # describe: una concesión mal formada no concede nada y aun así alguien creyó estar
+    # autorizando algo, así que el silencio deja a una persona esperando un permiso que no
+    # existe. Se volvió urgente el 2026-10-31, al hacer obligatorios `runtimes` y `lifts`: sin
+    # esta línea, una concesión escrita antes queda anulada y nada lo dice.
+    if ctx.policy_path.is_file():
+        try:
+            from core.grants import problemas_declarados
+            from core.policy import Policy
+            malas = problemas_declarados(Policy.load(ctx.policy_path))
+            if malas:
+                checks.append(("concesiones", False,
+                               f"{len(malas)} mal formada(s), no conceden nada: " +
+                               " · ".join(malas[:3])))
+        except Exception as e:                                          # noqa: BLE001
+            checks.append(("concesiones", False, f"no se pudieron leer: {e}"))
+
     # El lanzador del guardián, y a quién pertenece lo que escribe.
     from core import launcher
     lz = launcher.check(ws)
@@ -243,6 +261,11 @@ _REMEDIO_ARTEFACTO = {
                    "do": "refuto install", "who": MAQUINA},
     "política": {"why": "no hay política: sin ella el guardián aplica los valores de fábrica",
                  "do": "refuto install", "who": MAQUINA},
+    "concesiones": {"why": "hay concesiones de privilegio mal formadas: no conceden nada, y "
+                           "alguien creyó estar autorizando algo. Desde 0.8.2 `runtimes` y "
+                           "`lifts` son obligatorios",
+                    "do": "edite `.harness/policy.json` y declare los campos que falten",
+                    "who": PERSONA},
     "lock": {"why": "no hay lock: el espacio no declara con qué origen se materializó, y "
                     "G-LOCK no puede afirmar nada",
              "do": "refuto lock init", "who": PERSONA},

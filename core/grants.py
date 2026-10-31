@@ -40,6 +40,25 @@ Qué hace que una concesión no sea un agujero
 5. **Una concesión mal formada no concede nada**, y se puede enumerar para decirlo en vez de
    ignorarla en silencio.
 
+Qué levanta una concesión, y por qué `ask` también
+--------------------------------------------------
+Hasta el 2026-10-31 una concesión sólo levantaba `command_deny`. La consecuencia, medida ese
+día sobre el espacio telhar: `git push:*` y `glab mr:*` viven en `command_ask`, el bucle de
+`ask` no consultaba `buscar`, y por tanto **ninguna concesión podía autorizarlos**. En Claude
+Code eso no se notaba —`ask` pregunta y la persona aprueba—, pero en Codex `ask` se degrada a
+`deny` (`core/dialect.py`), así que publicar quedaba sin **ningún** camino declarado: ni
+ejecutar, ni pedirlo. Un control sin camino legítimo es el que se rodea, que es justo el
+argumento con el que nace este módulo.
+
+Así que `ask` se levanta igual que `deny`, y la asimetría que se conserva es otra: una
+concesión sigue sin autorizar lo que la política no restringía. `ls -la` se decide por la
+política aunque la concesión diga `commands: ["*"]`. Lo que cambia es QUÉ restricción se puede
+levantar, no que ahora sea una lista de permisos.
+
+Y `human_approval` conserva su significado en los dos canales: `once-per-grant` convierte el
+`ask` en `allow`; `each-time` lo deja en `ask` y sólo le cambia el motivo, para que el diario
+diga que había una concesión detrás de la pregunta.
+
 Lo que esto NO es
 -----------------
 No es un modelo de privilegio del sistema operativo. El agente sigue corriendo con el uid del
@@ -73,13 +92,37 @@ APROBACION_POR_OMISION = "each-time"
 EFECTOS = ("read-only", "unrestricted")
 EFECTOS_POR_OMISION = "read-only"
 
+#: Qué canal puede levantar una concesión: la consulta (`command_ask`), el rechazo
+#: (`command_deny`), o los dos si se escriben los dos.
+#:
+#: Hace falta porque los patrones son `fnmatch` y **no tienen negación**. Medido el 2026-10-31:
+#: una concesión con `commands: ["git push *"]`, escrita para levantar la CONSULTA de
+#: `git push:*`, levantaba también el RECHAZO de `git push --force:*` — porque el patrón casa
+#: las dos órdenes y no hay forma de escribir «empuja, pero no forzado». Sin este campo, la
+#: única manera de darle camino a la publicación era abrir de paso el empuje forzado, que es
+#: justo lo que `command_deny` existe para impedir.
+#:
+#: No tiene valor por omisión: una lista vacía no levanta nada, igual que `roles` o `hosts`.
+LEVANTAMIENTOS = ("ask", "deny")
+
 
 @dataclass(frozen=True)
 class Concesion:
     id: str
     roles: tuple = ()
     hosts: tuple = ()
+    #: En qué runtimes vale. NO es decoración: los runtimes no tienen el mismo repertorio de
+    #: respuestas, así que la MISMA concesión no significa lo mismo en todos. Medido el
+    #: 2026-10-31 contra Codex 0.166.0: su `PreToolUse` sólo implementa `deny` —«PreToolUse
+    #: hook returned unsupported permissionDecision:ask»—, de modo que ahí `ask` no pregunta:
+    #: no ejecuta. Claude Code implementa el enum entero y sí pregunta. Una concesión escrita
+    #: para devolverle a Codex un camino declarado, aplicada a Claude Code, le QUITA la
+    #: pregunta que allí funcionaba. `runtimes` es lo que impide que arreglar un runtime
+    #: degrade otro.
+    runtimes: tuple = ()
     commands: tuple = ()
+    #: Qué canal levanta. Ver `LEVANTAMIENTOS`.
+    lifts: tuple = ()
     effects: str = EFECTOS_POR_OMISION
     human_approval: str = APROBACION_POR_OMISION
     expires: str = ""
@@ -90,7 +133,9 @@ class Concesion:
         return cls(id=str(d.get("id", "")),
                    roles=tuple(d.get("roles") or ()),
                    hosts=tuple(d.get("hosts") or ()),
+                   runtimes=tuple(d.get("runtimes") or ()),
                    commands=tuple(d.get("commands") or ()),
+                   lifts=tuple(d.get("lifts") or ()),
                    effects=str(d.get("effects") or EFECTOS_POR_OMISION),
                    human_approval=str(d.get("human_approval") or APROBACION_POR_OMISION),
                    expires=str(d.get("expires", "")),
@@ -107,11 +152,20 @@ class Concesion:
             malos.append("sin `id`: una concesión que no se puede nombrar no se puede auditar ni "
                          "retirar")
         for campo, valor in (("roles", self.roles), ("hosts", self.hosts),
-                             ("commands", self.commands)):
+                             ("runtimes", self.runtimes), ("commands", self.commands)):
             if not valor:
                 malos.append(f"`{campo}` vacío. Una lista vacía NO significa «cualquiera»: para "
                              f"eso se escribe `[\"*\"]`, y escribir el comodín es el punto — un "
                              f"campo que concede todo por omisión concede por descuido")
+        # `lifts` va aparte: no admite comodín, así que el mensaje de los otros cuatro —«para eso
+        # se escribe ["*"]»— diría algo falso, y un diagnóstico que propone un valor inválido
+        # cuesta otra vuelta a quien lo lee.
+        if not self.lifts:
+            malos.append(f"`lifts` vacío: hay que declarar qué canal levanta, {LEVANTAMIENTOS}. "
+                         f"No admite comodín, y una lista vacía no levanta nada")
+        for l in self.lifts:
+            if l not in LEVANTAMIENTOS:
+                malos.append(f"`lifts: {l}` no es uno de {LEVANTAMIENTOS}")
         if self.effects not in EFECTOS:
             malos.append(f"`effects: {self.effects}` no es uno de {EFECTOS}")
         if self.human_approval not in APROBACIONES:
@@ -134,7 +188,8 @@ class Concesion:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "roles": list(self.roles), "hosts": list(self.hosts),
-                "commands": list(self.commands), "effects": self.effects,
+                "runtimes": list(self.runtimes), "commands": list(self.commands),
+                "lifts": list(self.lifts), "effects": self.effects,
                 "human_approval": self.human_approval, "expires": self.expires,
                 "evidence": self.evidence}
 
@@ -160,9 +215,9 @@ def cargar(policy) -> tuple:
                  for d in (getattr(policy, "privilege_grants", None) or ()))
 
 
-def buscar(policy, orden: str, *, rol: str = "", host: str = "", efectos=None,
-           hoy: date | None = None) -> Veredicto:
-    """¿Alguna concesión autoriza esta orden, para este rol, en este host, hoy?
+def buscar(policy, orden: str, *, canal: str, rol: str = "", host: str = "",
+           runtime: str = "", efectos=None, hoy: date | None = None) -> Veredicto:
+    """¿Alguna concesión autoriza esta orden, para este rol, en este host, en este runtime, hoy?
 
     `efectos` es el `Efectos` de la orden si quien llama ya lo calculó; se pide en vez de
     recalcularlo porque `decide_command` lo tiene delante y derivarlo dos veces sería pagar dos
@@ -177,6 +232,12 @@ def buscar(policy, orden: str, *, rol: str = "", host: str = "", efectos=None,
             continue
         if not _coincide(orden, c.commands):
             continue            # no es candidata: ni se menciona
+        if canal not in c.lifts:
+            # Antes de cualquier otra cosa, y SIN descarte: una concesión escrita para la
+            # consulta no es «una concesión que no aplicó» en el canal de rechazo — sencillamente
+            # no habla de él. Anotarla aquí llenaría el motivo de un `deny` con concesiones que
+            # nadie escribió para eso.
+            continue
         # Desde aquí la concesión SÍ describe esta orden, así que todo descarte se explica — es
         # la diferencia entre «no hay concesión» y «la hay y no aplica porque caducó ayer».
         if c.caducada(hoy):
@@ -189,6 +250,14 @@ def buscar(policy, orden: str, *, rol: str = "", host: str = "", efectos=None,
         if not _coincide(anfitrion, c.hosts):
             v.descartes.append(f"«{c.id}» describe esta orden y es para {list(c.hosts)}; "
                                f"esta máquina es «{anfitrion}»")
+            continue
+        # Se comprueba con la MISMA forma que rol y host, y con el mismo defecto estricto: un
+        # runtime que la concesión no nombra no está concedido. Sin runtime declarado tampoco
+        # —`"(sin runtime)"` no casa ningún patrón salvo `"*"`—, porque una llamada que no dice
+        # desde dónde viene no puede cobrar una autorización escrita para otro sitio.
+        if not _coincide(runtime or "(sin runtime)", c.runtimes):
+            v.descartes.append(f"«{c.id}» describe esta orden y es para {list(c.runtimes)}; "
+                               f"esta sesión corre en «{runtime or '(sin runtime)'}»")
             continue
         if c.effects == "read-only":
             # Sin `Ê` no hay nada que verificar, y entonces la concesión NO aplica. Es la misma
@@ -216,7 +285,8 @@ def buscar(policy, orden: str, *, rol: str = "", host: str = "", efectos=None,
         v.concesion = c
         v.motivo = (f"autorizada por la concesión «{c.id}»"
                     + (f" ({c.evidence})" if c.evidence else "")
-                    + f", para {list(c.roles)} en {list(c.hosts)}, "
+                    + f", para {list(c.roles)} en {list(c.hosts)} "
+                    + f"bajo {list(c.runtimes)}, levanta {list(c.lifts)}, "
                     + (f"efectos `{c.effects}` verificados contra Ê, "
                        if c.effects == "read-only" else f"efectos `{c.effects}`, ")
                     + f"vigente hasta {c.expires}")

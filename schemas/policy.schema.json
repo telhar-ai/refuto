@@ -66,7 +66,9 @@
     },
     "secret_env_deny": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Nombres de variable de ENTORNO con forma de credencial, con globs e insensible a mayúsculas. ACUMULA por herencia: marcar de más cuesta una consulta a una persona, marcar de menos cuesta el secreto. Se compara el NOMBRE, nunca el valor — mirar el valor de cada variable para decidir si es un secreto obligaría a leer todos los secretos para protegerlos. Se consulta en el MISMO canal de lectura que secret_read_deny, porque `printenv MI_SERVICIO_API_KEY` y `cat .env` son la misma pregunta por dos caminos. Medido el 2026-09-25 en una sesión real: 70 variables y 7 con forma de credencial, todas legibles, mientras .env estaba protegido. La lista de fábrica está CURADA: un sondeo con SESSION|AUTH|KEY marcaba SSH_AUTH_SOCK —que es la ruta de un socket— y HARNESS_SESSION, que es de refuto; un detector que marca lo normal enseña a ignorarlo."
     },
     "command_deny": {
@@ -103,8 +105,10 @@
     },
     "privilege_grants": {
       "type": "array",
-      "description": "Excepciones NOMBRADAS en el canal de órdenes: el análogo de writable_paths, que es una excepción nombrada a protected_paths. Se evalúan ANTES de command_deny —una excepción evaluada después nunca ganaría— y su monotonía es REDUCE_LISTA: el hijo sólo puede retirar concesiones enteras, nunca añadir ni modificar una que conserva. Lo que impide que sea un agujero: la concesión vive en .harness/policy.json, que esta misma política protege, así que un agente no puede concederse privilegio a sí mismo — `human_approval` no es un campo que alguien deba comprobar, es una propiedad del sitio donde la concesión está escrita. Y `effects: read-only` se VERIFICA contra Ê: si la orden deriva alguna escritura, o si es opaca, la concesión no aplica. Una concesión mal formada no concede nada. Ver core/grants.py y ADR-0016.",
-      "items": { "$ref": "#/$defs/grant" }
+      "description": "Excepciones NOMBRADAS en el canal de órdenes: el análogo de writable_paths, que es una excepción nombrada a protected_paths. Se evalúan ANTES de command_deny y de command_ask —una excepción evaluada después nunca ganaría— y su monotonía es REDUCE_LISTA: el hijo sólo puede retirar concesiones enteras, nunca añadir ni modificar una que conserva. Lo que impide que sea un agujero: la concesión vive en .harness/policy.json, que esta misma política protege, así que un agente no puede concederse privilegio a sí mismo — `human_approval` no es un campo que alguien deba comprobar, es una propiedad del sitio donde la concesión está escrita. Y `effects: read-only` se VERIFICA contra Ê: si la orden deriva alguna escritura, o si es opaca, la concesión no aplica. Una concesión mal formada no concede nada. Ver core/grants.py y ADR-0016.",
+      "items": {
+        "$ref": "#/$defs/grant"
+      }
     },
     "role_capabilities": {
       "type": "object",
@@ -112,7 +116,10 @@
       "patternProperties": {
         "^[a-z][a-z0-9-]*$": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "additionalProperties": false
@@ -121,7 +128,15 @@
   "$defs": {
     "grant": {
       "type": "object",
-      "required": ["id", "roles", "hosts", "commands", "expires"],
+      "required": [
+        "id",
+        "roles",
+        "hosts",
+        "runtimes",
+        "commands",
+        "lifts",
+        "expires"
+      ],
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -132,27 +147,62 @@
         "roles": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Roles a los que aplica. `[\"*\"]` significa cualquiera, y escribir el comodín es el punto: una lista vacía NO concede a todos, no concede a nadie. Un campo que concede todo por omisión concede por descuido."
         },
         "hosts": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Máquinas donde aplica, contra `platform.node()`, con globs. `[\"*\"]` para cualquiera."
+        },
+        "runtimes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Runtimes donde aplica, con globs. `[\"*\"]` para cualquiera. Obligatorio, y no es simetría con roles/hosts: los runtimes NO tienen el mismo repertorio de respuestas, así que la misma concesión no significa lo mismo en todos. Medido el 2026-10-31 contra Codex 0.166.0: su PreToolUse sólo implementa `deny` — «PreToolUse hook returned unsupported permissionDecision:ask» —, de modo que allí `ask` no pregunta, no ejecuta. Claude Code implementa el enum entero y sí pregunta. Una concesión escrita para devolverle a Codex un camino declarado, aplicada a Claude Code, le QUITA la pregunta que allí funcionaba."
         },
         "commands": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Formas de orden que autoriza, con globs. Se comparan contra cada segmento de la cadena, no contra la cadena entera: encadenar no amplía la concesión."
         },
+        "lifts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "ask",
+              "deny"
+            ]
+          },
+          "description": "Qué canal levanta: `ask` (command_ask), `deny` (command_deny), o los dos si se escriben los dos. Obligatorio. Hace falta porque los patrones son fnmatch y NO tienen negación: medido el 2026-10-31, una concesión con `commands: [\"git push *\"]`, escrita para la consulta `git push:*`, levantaba también el rechazo `git push --force:*` — el patrón casa las dos órdenes y «empuja, pero no forzado» no se puede escribir. Sin este campo, la única forma de dar camino a la publicación era abrir de paso el empuje forzado."
+        },
         "effects": {
-          "enum": ["read-only", "unrestricted"],
+          "enum": [
+            "read-only",
+            "unrestricted"
+          ],
           "description": "`read-only` se VERIFICA contra Ê: si la orden deriva alguna escritura, o si su efecto no se puede derivar (opaca), la concesión no aplica — no poder demostrar que no escribe no es haber demostrado que no escribe. `unrestricted` no se verifica, y se llama así y no «any» para que quien lo escriba lea que renuncia a la comprobación. Por omisión, `read-only`."
         },
         "human_approval": {
-          "enum": ["each-time", "once-per-grant"],
+          "enum": [
+            "each-time",
+            "once-per-grant"
+          ],
           "description": "`once-per-grant`: la persona aprobó la clase al escribir la concesión → allow. `each-time`: aprueba cada instancia → ask. Por omisión el ESTRICTO (`each-time`): en una tabla de autorización, un campo ausente que significara «adelante» concede por descuido."
         },
         "expires": {

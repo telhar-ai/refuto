@@ -10,6 +10,139 @@ histórica no las conservó, se dice.
 
 ---
 
+## 0.8.3 — *sin publicar* · el sobre de `apply_patch` se leía como órdenes de consola
+
+Medido el **2026-10-31** contra el guardián vivo del espacio `telhar`, a partir de su diario de
+evidencia. Dos defectos opuestos en el mismo canal, y el canal **no tenía ninguna prueba**: es
+por eso que sobrevivieron los dos.
+
+Codex envía `apply_patch` con el sobre entero —directivas y contenido del fichero— en
+`tool_input.command`, y `evaluate` se lo pasaba a `decide_command`.
+
+**Ruido que bloquea.** Un fichero de pruebas de TypeScript que levanta dos servidores HTTP en
+loopback:
+
+```ts
+const base = `http://127.0.0.1:${(trap.address()).port}`;
+```
+
+```
+ask  regla=programa-sin-resolver
+     «el nombre del programa se construye en tiempo de ejecución
+      («http://127.0.0.1:${(trap.address()).port»)»
+```
+
+y en Codex ese `ask` viaja como `deny`, así que el parche no se aplicó. El mismo evento registró
+`escrituras_probadas: ["=", "new", "resolve", "s.close", "server.listen", "trap.listen", "{"]` —
+tokens de TypeScript tomados por nombres de programa y por destinos de redirección, cada uno
+comparado contra las rutas protegidas. **Ninguno casó por suerte, no por diseño**: un fichero
+fuente que contuviera la cadena correcta habría producido un rechazo con un motivo falso.
+
+Es el mismo eje que el documento aquí citado de 0.6.x, un canal más allá: un control debe saltar
+con la ACCIÓN, no con el TEXTO.
+
+**Silencio que deja pasar.** `block_secret_content` se aplica en `decide_write`, que recibe
+`fact["content"]`. `apply_patch` no trae `tool_input.content` —su contenido viaja dentro del
+sobre, igual que sus rutas—, así que el control existía, se ejecutaba, y en este canal no miraba
+nada:
+
+```
+Write        src/config.ts     const k = "AKIA…"   →  deny
+apply_patch  (mismo fichero)  +const k = "AKIA…"   →  ALLOW
+```
+
+Es el mismo defecto que `_rutas_apply_patch` cerró para las rutas, un campo más allá.
+
+**El arreglo es un solo movimiento:** tratar el sobre como lo que es. No se pasa a
+`decide_command` —no es una orden—, y sus líneas añadidas se extraen con
+`_contenido_apply_patch` y viajan a `decide_write` junto con sus rutas. No se retira ninguna
+comprobación: lo que se retira es un análisis que no era aplicable. Sólo cuentan las líneas `+`,
+porque contar las `-` haría que **quitar** una credencial del código se rechazara por contener
+una credencial.
+
+`tests/adversarial/test_sobre_apply_patch.py`, 15 pruebas, con las dos mitades juntas a
+propósito: sin la segunda, la primera se satisface desactivando el control.
+
+**Y una regresión propia, cazada por la suite.** Al hacer que `decide_command` reciba `runtime`,
+`evaluate` lo leía con `fact["runtime"]`. `core/protocol.py` construye el hecho **a mano** para
+responder `policy/decide` por MCP y no lo traía, así que el servidor devolvía «Internal server
+error: 'runtime'» a toda consulta con orden. Se lee con `.get` —vacío es el defecto estricto— y
+la consulta MCP puede ahora declarar su `runtime`. La cazó `tests/contract`, que ejerce el
+servidor de verdad; ninguna prueba unitaria la habría visto.
+
+**El artefacto de Codex dejaba creer que configuraba algo.** `.codex/harness-policy.json` lleva
+`sandbox_mode` y `approval_policy`, y su `_nota` sólo desmentía la lista de órdenes — así que por
+omisión se leía que esos dos campos sí se aplicaban. Medido: **no se aplican**. El nombre del
+fichero no aparece en el binario de Codex 0.166.0 y no se referencia desde `~/.codex/config.toml`;
+se aplican en la invocación (`--sandbox`, `--ask-for-approval`). El fichero generado lo dice ahora
+en su primera clave, con la orden que sí los aplica y la que lo comprueba. Ojo con
+`trust_level = "trusted"` en `config.toml`: **no** equivale a esas dos banderas.
+
+## 0.8.2 — *sin publicar* · la concesión no alcanzaba al canal que la necesitaba
+
+Medido el **2026-10-31** sobre el espacio `telhar`, a raíz de una sesión de Codex que no podía
+publicar ni pidiéndolo.
+
+**`privilege_grants` no levantaba `command_ask`.** `core.grants.buscar` se consultaba sólo dentro
+del bucle de `command_deny` y en el bloque de elevación no nombrada. El bucle de `command_ask` no
+preguntaba nunca. Como `git push:*` y `glab mr:*` son `command_ask`, **ninguna concesión podía
+autorizarlos** — comprobado añadiendo a la política real una concesión que nombraba la orden:
+
+```
+[sin concesión] git push -u origin fix/…   →  ask   regla=git push:*
+[con concesión] git push -u origin fix/…   →  ask   regla=git push:*
+```
+
+En Claude Code el defecto quedaba tapado: `ask` pregunta y una persona aprueba. En Codex no.
+Medido contra el binario de Codex 0.166.0, no contra su documentación:
+
+```
+PreToolUse hook returned unsupported permissionDecision:ask
+PreToolUse hook returned unsupported permissionDecision:allow
+```
+
+Su `PreToolUse` implementa `deny` y nada más, así que `ask` viaja como `deny` (`core/dialect.py`
+ya lo declaraba). Resultado: desde Codex, publicar no tenía **ningún** camino declarado — ni
+ejecutar, ni pedirlo. Un control que no ofrece camino legítimo se rodea, que es el argumento con
+el que nace `core/grants.py`.
+
+Y la pieza que `core/dialect.py` nombraba como pendiente —el evento `PermissionRequest` de
+Codex— **no arregla esto**: ese evento se dispara cuando Codex ya decidió preguntar, así que un
+gancho puede auto-responder su pregunta, no provocarla. Implementarlo no le devuelve a refuto la
+capacidad de pedir una decisión humana desde `PreToolUse`; esa capacidad no existe en Codex hoy.
+
+**Dos campos nuevos, los dos obligatorios**, porque abrir el canal sin ellos habría cambiado dos
+cosas que nadie pidió. No tienen valor por omisión: una lista vacía no concede, igual que `roles`
+o `hosts`.
+
+- **`runtimes`** — los runtimes no tienen el mismo repertorio de respuestas, así que la misma
+  concesión no significa lo mismo en todos. En Codex le devuelve a la publicación un camino que
+  no tenía; en Claude Code le **quita** la pregunta que allí sí funcionaba. Sin este campo,
+  arreglar un runtime degradaba el otro en silencio.
+- **`lifts`** — `("ask", "deny")`: qué canal levanta. Lo encontró una prueba adversarial de este
+  mismo cambio. Los patrones son `fnmatch` y **no tienen negación**, así que una concesión con
+  `commands: ["git push *"]`, escrita para la consulta `git push:*`, levantaba también el rechazo
+  `git push --force:*`:
+
+  ```
+  allow  git push -u origin rama          ← lo que se quería
+  allow  git push --force origin main     ← lo que no
+  allow  git push -f origin main
+  ```
+
+  «Empuja, pero no forzado» no se puede escribir como patrón. Sin `lifts`, la única forma de dar
+  camino a la publicación era abrir de paso el empuje forzado, que es exactamente lo que
+  `command_deny` existe para impedir.
+
+`decide_command` recibe `runtime` por parámetro y no por el entorno, al contrario que el rol: el
+guardián ya lo tiene en `--runtime` y es el dato con el que serializa la respuesta, así que leerlo
+de una variable permitiría que la decisión y su traducción hablaran de runtimes distintos.
+
+**Migración.** Toda concesión existente queda mal formada hasta que declare los dos campos, y una
+concesión mal formada no concede nada y se enumera (`problemas_declarados`). Medido el 2026-10-31:
+en esta máquina hay **2 concesiones vivas**, las dos en `telhar`, las dos `lifts: ["deny"]` y
+`runtimes: ["*"]`.
+
 ## 0.8.1 — *sin publicar* · una opción global evadía el emparejamiento, y `find -delete` se aprobaba
 
 Dos huecos medidos el **2026-10-30** contra el guardián vivo de un espacio real, analizando su

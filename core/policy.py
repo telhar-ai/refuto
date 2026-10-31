@@ -1635,8 +1635,14 @@ def _segmentos(command: str) -> list:
     return out
 
 
-def decide_command(policy: Policy, command: str, workspace: Path | None = None) -> Decision:
+def decide_command(policy: Policy, command: str, workspace: Path | None = None, *,
+                   runtime: str = "") -> Decision:
     """Decide si una orden de consola se ejecuta, se pregunta o se rechaza.
+
+    `runtime` llega por parámetro y no por el entorno, al contrario que el rol: el guardián ya
+    lo recibe en `--runtime` y es el dato con el que serializa la respuesta, así que leerlo otra
+    vez de una variable permitiría que la decisión y su traducción hablaran de runtimes
+    distintos. Vacío significa «no se dijo», y una concesión que no nombre `"*"` no lo cubre.
 
     Dos comprobaciones, y la primera es la que faltaba
     ---------------------------------------------------
@@ -1757,7 +1763,8 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
                 # saber que hay rechazo convertiría la tabla en una lista de permisos, que es otra
                 # cosa y más ancha.
                 from core.grants import buscar
-                v = buscar(policy, cmd, rol=os.environ.get("HARNESS_ROLE", ""), efectos=ef)
+                v = buscar(policy, cmd, canal="deny", rol=os.environ.get("HARNESS_ROLE", ""),
+                           runtime=runtime, efectos=ef)
                 if v.concesion is not None:
                     if v.concesion.human_approval == "once-per-grant":
                         return Decision(ALLOW, rule=f"concesion:{v.concesion.id}",
@@ -1784,9 +1791,39 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
                     continue
                 if (_matches_command(cmd, pattern) or _matches_command(normalizado, pattern)
                         or any(_matches_command(f, pattern) for f in candidatas)):
+                    # La excepción nombrada vale aquí igual que en el bucle de rechazo, y hasta
+                    # el 2026-10-31 no se consultaba. El defecto que eso dejaba abierto, medido
+                    # sobre telhar: `git push:*` y `glab mr:*` son `command_ask`, así que NINGUNA
+                    # concesión podía autorizarlos. En Claude Code se tapaba solo —`ask`
+                    # pregunta—, pero en Codex `ask` viaja como `deny` (ver `core/dialect.py`,
+                    # medido contra 0.166.0), y entonces publicar no tenía camino declarado
+                    # alguno: ni ejecutar, ni pedirlo. Un control sin camino legítimo se rodea.
+                    from core.grants import buscar
+                    v = buscar(policy, cmd, canal="ask", rol=os.environ.get("HARNESS_ROLE", ""),
+                               runtime=runtime, efectos=ef)
+                    if v.concesion is not None:
+                        if v.concesion.human_approval == "once-per-grant":
+                            return Decision(ALLOW, rule=f"concesion:{v.concesion.id}",
+                                            reason=f"«{pattern}» se consulta por omisión y esta "
+                                                   f"orden está {v.motivo}. La concesión vive en "
+                                                   f"la política, que el agente no puede "
+                                                   f"escribir: por eso vale como aprobación.",
+                                            **marca)
+                        peor_ask = Decision(ASK, rule=f"concesion:{v.concesion.id}",
+                                            reason=f"«{pattern}» se consulta por omisión y esta "
+                                                   f"orden está {v.motivo}, con aprobación por "
+                                                   f"instancia: lo decide una persona cada vez.",
+                                            **marca)
+                        break
+                    # El mismo diagnóstico que los otros dos bucles: «no hay concesión» y «la hay
+                    # y es de otro runtime» se arreglan distinto.
+                    extra = ""
+                    if v.descartes:
+                        extra = (" Hay concesión(es) que describen esta orden y no aplican: "
+                                 + " · ".join(v.descartes[:3]))
                     peor_ask = Decision(ASK, rule=pattern,
                                         reason=f"«{pattern}» sale del repositorio o cambia algo "
-                                               f"remoto: lo decide una persona.", **marca)
+                                               f"remoto: lo decide una persona.{extra}", **marca)
                     break
     # ── eleva, y ningún patrón lo nombraba ───────────────────────────────────────────
     #
@@ -1813,7 +1850,8 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
             # NOMBRADO se podría conceder y uno no nombrado no: la misma orden, autorizable o no
             # según qué binario use, que es justo la dependencia que este bloque quita.
             from core.grants import buscar
-            v = buscar(policy, cmd, rol=os.environ.get("HARNESS_ROLE", ""), efectos=ef)
+            v = buscar(policy, cmd, canal="deny", rol=os.environ.get("HARNESS_ROLE", ""),
+                           runtime=runtime, efectos=ef)
             if v.concesion is not None:
                 if v.concesion.human_approval == "once-per-grant":
                     return Decision(ALLOW, rule=f"concesion:{v.concesion.id}",

@@ -98,6 +98,7 @@ class TestLaConcesionReadOnlyNoSeDejaEnganar(unittest.TestCase):
         self.policy = Policy.default()
         self.policy.privilege_grants = ({
             "id": "diagnostico-de-lectura", "roles": [ROL], "hosts": [platform.node()],
+            "runtimes": ["*"], "lifts": ["deny"],
             "commands": ["sudo *"], "effects": "read-only",
             "human_approval": "once-per-grant", "expires": "2099-01-01",
             "evidence": "SHOME-120"},)

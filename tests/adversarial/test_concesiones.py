@@ -42,7 +42,9 @@ BASE = {
     "id": "diagnostico-de-lectura",
     "roles": [ROL],
     "hosts": [ESTE_HOST],
+    "runtimes": ["*"],
     "commands": ["sudo grep *", "sudo strings *"],
+    "lifts": ["deny"],
     "effects": "read-only",
     "human_approval": "once-per-grant",
     "expires": "2099-01-01",
@@ -282,17 +284,17 @@ class TestBuscarNoDependeDelEntorno(unittest.TestCase):
     def test_el_host_y_el_rol_se_pueden_inyectar(self):
         p = _politica()
         ef = efectos(ORDEN)
-        self.assertIsNotNone(buscar(p, ORDEN, rol=ROL, host=ESTE_HOST, efectos=ef).concesion)
-        self.assertIsNone(buscar(p, ORDEN, rol="otro", host=ESTE_HOST, efectos=ef).concesion)
-        self.assertIsNone(buscar(p, ORDEN, rol=ROL, host="otro", efectos=ef).concesion)
+        self.assertIsNotNone(buscar(p, ORDEN, canal="deny", rol=ROL, host=ESTE_HOST, efectos=ef).concesion)
+        self.assertIsNone(buscar(p, ORDEN, canal="deny", rol="otro", host=ESTE_HOST, efectos=ef).concesion)
+        self.assertIsNone(buscar(p, ORDEN, canal="deny", rol=ROL, host="otro", efectos=ef).concesion)
 
     def test_la_fecha_se_puede_inyectar(self):
         from datetime import date
         p = _politica(expires="2026-06-01")
         ef = efectos(ORDEN)
-        self.assertIsNotNone(buscar(p, ORDEN, rol=ROL, host=ESTE_HOST, efectos=ef,
+        self.assertIsNotNone(buscar(p, ORDEN, canal="deny", rol=ROL, host=ESTE_HOST, efectos=ef,
                                     hoy=date(2026, 5, 31)).concesion)
-        self.assertIsNone(buscar(p, ORDEN, rol=ROL, host=ESTE_HOST, efectos=ef,
+        self.assertIsNone(buscar(p, ORDEN, canal="deny", rol=ROL, host=ESTE_HOST, efectos=ef,
                                  hoy=date(2026, 6, 2)).concesion)
 
     def test_sin_efectos_una_concesion_read_only_no_concede(self):
@@ -301,7 +303,7 @@ class TestBuscarNoDependeDelEntorno(unittest.TestCase):
         Es el mismo criterio que el caso opaco. Antes, `efectos=None` saltaba la comprobación
         completa y `read-only` volvía a ser una promesa de quien escribe la concesión.
         """
-        v = buscar(_politica(), ORDEN, rol=ROL, host=ESTE_HOST, efectos=None)
+        v = buscar(_politica(), ORDEN, canal="deny", rol=ROL, host=ESTE_HOST, efectos=None)
         self.assertIsNone(v.concesion)
         self.assertTrue(any("no trae los efectos" in d for d in v.descartes),
                         f"el descarte tiene que explicarse, y dice: {v.descartes}")
@@ -309,3 +311,224 @@ class TestBuscarNoDependeDelEntorno(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# El canal `command_ask`, y el runtime. Añadido el 2026-10-31.
+#
+# Hasta esa fecha una concesión sólo levantaba `command_deny`. `git push:*` y `glab mr:*` viven
+# en `command_ask`, así que NINGUNA concesión podía autorizarlos: medido sobre la política real
+# de telhar, con una concesión que nombraba la orden, `git push` seguía dando `ask`. En Claude
+# Code eso no se notaba; en Codex `ask` viaja como `deny` (`core/dialect.py`, medido contra
+# 0.166.0: «PreToolUse hook returned unsupported permissionDecision:ask»), y entonces publicar
+# no tenía camino declarado alguno — ni ejecutar, ni pedirlo.
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+PUBLICAR = {
+    "id": "publicacion-gobernada",
+    "roles": ["*"],
+    "hosts": ["*"],
+    "runtimes": ["codex"],
+    "commands": ["git push *", "glab mr *"],
+    "lifts": ["ask"],
+    "effects": "unrestricted",
+    "human_approval": "once-per-grant",
+    "expires": "2099-01-01",
+    "evidence": "SHOME-131",
+}
+EMPUJE = "git push -u origin feat/issue-12-algo"
+
+
+def _publicacion(**cambios) -> Policy:
+    g = dict(PUBLICAR)
+    g.update(cambios)
+    p = Policy.default()
+    p.privilege_grants = (g,)
+    return p
+
+
+class TestLaConcesionLevantaTambienElAsk(_ConRol):
+    """El defecto que esto cierra: `command_ask` no consultaba las concesiones."""
+
+    def test_sin_concesion_el_empuje_se_consulta(self):
+        d = decide_command(Policy.default(), EMPUJE, RAIZ, runtime="codex")
+        self.assertEqual(ASK, d.outcome)
+        self.assertEqual("git push:*", d.rule)
+
+    def test_con_concesion_y_aprobacion_de_clase_se_ejecuta(self):
+        d = decide_command(_publicacion(), EMPUJE, RAIZ, runtime="codex")
+        self.assertEqual(ALLOW, d.outcome)
+        self.assertEqual("concesion:publicacion-gobernada", d.rule)
+        self.assertIn("SHOME-131", d.reason, "la evidencia no viajó al motivo")
+
+    def test_con_aprobacion_por_instancia_sigue_preguntando_pero_se_nombra(self):
+        """`each-time` no deja de preguntar: sólo dice que había una concesión detrás."""
+        d = decide_command(_publicacion(human_approval="each-time"), EMPUJE, RAIZ,
+                           runtime="codex")
+        self.assertEqual(ASK, d.outcome)
+        self.assertEqual("concesion:publicacion-gobernada", d.rule)
+
+    def test_glab_mr_tambien(self):
+        d = decide_command(_publicacion(), "glab mr create --draft", RAIZ, runtime="codex")
+        self.assertEqual(ALLOW, d.outcome)
+
+    def test_la_asimetria_se_conserva(self):
+        """Levantar `ask` no convierte la tabla en una lista de permisos.
+
+        Lo que una concesión NO puede seguir haciendo es autorizar lo que la política no
+        restringía: `ls -la` se decide por la política aunque la concesión diga `["*"]`.
+        """
+        d = decide_command(_publicacion(commands=["*"]), "ls -la", RAIZ, runtime="codex")
+        self.assertEqual(ALLOW, d.outcome)
+        self.assertEqual("", d.rule, "la concesión se atribuyó una decisión que no tomó")
+
+    def test_un_rechazo_le_gana_a_la_concesion_de_consulta(self):
+        """Encadenar no amplía: el `deny` de otro segmento se impone sobre el `ask` levantado."""
+        d = decide_command(_publicacion(), f"{EMPUJE} && sudo rm -rf /tmp/x", RAIZ,
+                           runtime="codex")
+        self.assertEqual(DENY, d.outcome)
+
+    def test_el_empuje_forzado_sigue_rechazado(self):
+        """`git push --force:*` es `command_deny` y esta concesión no lo nombra."""
+        d = decide_command(_publicacion(), "git push --force origin main", RAIZ,
+                           runtime="codex")
+        self.assertEqual(DENY, d.outcome)
+
+
+class TestElRuntimeAcotaLaConcesion(_ConRol):
+    """Una concesión escrita para un runtime no puede degradar a otro.
+
+    El motivo no es simetría: los runtimes no tienen el mismo repertorio de respuestas. En
+    Codex `ask` no pregunta —no ejecuta—, así que una concesión le devuelve un camino que no
+    tenía. En Claude Code `ask` SÍ pregunta, así que la misma concesión le QUITA la pregunta.
+    Sin `runtimes`, arreglar un runtime degradaba el otro en silencio.
+    """
+
+    def test_otro_runtime_no_queda_cubierto(self):
+        d = decide_command(_publicacion(), EMPUJE, RAIZ, runtime="claude")
+        self.assertEqual(ASK, d.outcome)
+        self.assertEqual("git push:*", d.rule, "la concesión de codex se aplicó a claude")
+
+    def test_y_dice_por_que_no_aplico(self):
+        d = decide_command(_publicacion(), EMPUJE, RAIZ, runtime="claude")
+        self.assertIn("esta sesión corre en «claude»", d.reason)
+
+    def test_una_llamada_sin_runtime_no_cobra_una_concesion_de_runtime(self):
+        """Vacío es «no se dijo», y no se dijo no es «cualquiera»."""
+        d = decide_command(_publicacion(), EMPUJE, RAIZ)
+        self.assertEqual(ASK, d.outcome)
+        self.assertEqual("git push:*", d.rule)
+
+    def test_el_comodin_de_runtime_se_escribe_a_proposito(self):
+        d = decide_command(_publicacion(runtimes=["*"]), EMPUJE, RAIZ, runtime="claude")
+        self.assertEqual(ALLOW, d.outcome)
+
+    def test_sin_el_campo_la_concesion_esta_MAL_FORMADA(self):
+        """Un campo ausente en una tabla de autorización no puede significar «todo»."""
+        sin = dict(PUBLICAR)
+        del sin["runtimes"]
+        p = Policy.default()
+        p.privilege_grants = (sin,)
+        self.assertEqual(ASK, decide_command(p, EMPUJE, RAIZ, runtime="codex").outcome)
+        self.assertTrue(any("runtimes" in m for m in problemas_declarados(p)),
+                        "no se puede enumerar para decirlo")
+
+    def test_una_lista_vacia_de_runtimes_tampoco_concede(self):
+        p = _publicacion(runtimes=[])
+        self.assertEqual(ASK, decide_command(p, EMPUJE, RAIZ, runtime="codex").outcome)
+        self.assertTrue(problemas_declarados(p))
+
+    def test_el_runtime_no_llega_por_el_entorno(self):
+        """Se pasa por parámetro a propósito: el guardián ya lo tiene en `--runtime`.
+
+        Si se leyera del entorno, la decisión y su traducción podrían hablar de runtimes
+        distintos — el guardián serializa con el `--runtime` que recibió.
+        """
+        previo = os.environ.get("HARNESS_GUARD_RUNTIME")
+        os.environ["HARNESS_GUARD_RUNTIME"] = "codex"
+        try:
+            d = decide_command(_publicacion(), EMPUJE, RAIZ)
+            self.assertEqual(ASK, d.outcome, "la variable de entorno concedió por la puerta de atrás")
+        finally:
+            if previo is None:
+                os.environ.pop("HARNESS_GUARD_RUNTIME", None)
+            else:
+                os.environ["HARNESS_GUARD_RUNTIME"] = previo
+
+
+class TestElCanalAcotaLaConcesion(_ConRol):
+    """`lifts` existe porque los patrones son `fnmatch` y no tienen negación.
+
+    Medido el 2026-10-31, antes del campo: una concesión con `commands: ["git push *"]`,
+    escrita para levantar la CONSULTA de `git push:*`, levantaba también el RECHAZO de
+    `git push --force:*` — el patrón casa las dos órdenes y «empuja, pero no forzado» no se
+    puede escribir. La única manera de darle camino a la publicación era abrir de paso el
+    empuje forzado, que es exactamente lo que `command_deny` existe para impedir.
+    """
+
+    def test_una_concesion_de_consulta_NO_levanta_un_rechazo(self):
+        for orden in ("git push --force origin main", "git push -f origin main"):
+            with self.subTest(orden=orden):
+                d = decide_command(_publicacion(), orden, RAIZ, runtime="codex")
+                self.assertEqual(DENY, d.outcome)
+                self.assertNotIn("concesion", d.rule)
+
+    def test_y_aun_asi_levanta_la_consulta_que_sí_declara(self):
+        """El control de arriba no vale nada si de paso rompe el caso legítimo."""
+        self.assertEqual(ALLOW, decide_command(_publicacion(), EMPUJE, RAIZ,
+                                               runtime="codex").outcome)
+
+    def test_una_concesion_de_rechazo_NO_levanta_una_consulta(self):
+        """La asimetría va en los dos sentidos, o es una regla con una excepción."""
+        d = decide_command(_publicacion(lifts=["deny"]), EMPUJE, RAIZ, runtime="codex")
+        self.assertEqual(ASK, d.outcome)
+        self.assertEqual("git push:*", d.rule)
+
+    def test_declarar_los_dos_canales_se_escribe_a_proposito(self):
+        p = _publicacion(lifts=["ask", "deny"])
+        self.assertEqual(ALLOW, decide_command(p, EMPUJE, RAIZ, runtime="codex").outcome)
+        self.assertEqual(ALLOW, decide_command(p, "git push --force origin main", RAIZ,
+                                               runtime="codex").outcome)
+
+    def test_sin_el_campo_la_concesion_esta_MAL_FORMADA(self):
+        sin = dict(PUBLICAR)
+        del sin["lifts"]
+        p = Policy.default()
+        p.privilege_grants = (sin,)
+        self.assertEqual(ASK, decide_command(p, EMPUJE, RAIZ, runtime="codex").outcome)
+        self.assertTrue(any("lifts" in m for m in problemas_declarados(p)))
+
+    def test_un_canal_inventado_no_concede_y_se_puede_decir(self):
+        p = _publicacion(lifts=["todo"])
+        self.assertEqual(ASK, decide_command(p, EMPUJE, RAIZ, runtime="codex").outcome)
+        self.assertTrue(any("todo" in m for m in problemas_declarados(p)))
+
+    def test_el_canal_equivocado_no_ensucia_el_motivo_del_otro(self):
+        """Una concesión de consulta no es «una concesión que no aplicó» en el canal de rechazo.
+
+        Si se anotara como descarte, el motivo de cada `deny` arrastraría concesiones que
+        nadie escribió para ese canal, y el diagnóstico que `descartes` existe para dar
+        dejaría de distinguir «la hay y caducó» de «la hay y habla de otra cosa».
+        """
+        d = decide_command(_publicacion(), "git push --force origin main", RAIZ,
+                           runtime="codex")
+        self.assertNotIn("publicacion-gobernada", d.reason)
+
+
+class TestElDiagnosticoNoProponeUnValorInvalido(unittest.TestCase):
+    """Un diagnóstico que sugiere un valor que no existe cuesta otra vuelta a quien lo lee."""
+
+    def test_lifts_no_sugiere_el_comodin_porque_no_lo_admite(self):
+        c = Concesion.from_dict({"id": "x"})
+        sobre_lifts = [m for m in c.problemas() if m.startswith("`lifts`")]
+        self.assertEqual(1, len(sobre_lifts))
+        self.assertNotIn('["*"]', sobre_lifts[0], "propone un comodín que `lifts` no admite")
+        self.assertIn("ask", sobre_lifts[0])
+        self.assertIn("deny", sobre_lifts[0])
+
+    def test_los_otros_cuatro_si_lo_sugieren_porque_si_lo_admiten(self):
+        c = Concesion.from_dict({"id": "x"})
+        for campo in ("roles", "hosts", "runtimes", "commands"):
+            with self.subTest(campo=campo):
+                m = next(m for m in c.problemas() if m.startswith(f"`{campo}`"))
+                self.assertIn('["*"]', m)
