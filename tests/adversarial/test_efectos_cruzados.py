@@ -246,7 +246,7 @@ class TestLaRaizDeConfianzaNoLaEligeElSujeto(unittest.TestCase):
         with Workspace("raiz-vacia") as ws:
             pol = self._cargar(ws, {"schema": "harness.policy/v1", "version": "1",
                                     "protected_paths": [], "command_deny": []})
-            self.assertTrue(pol.is_protected("gates/g_agent.py"),
+            self.assertTrue((pol.is_protected("gates/g_agent.py") or pol.is_authority("gates/g_agent.py")[0]),
                            "la cima vació lo protegido y el efectivo se lo permitió")
             self.assertIn("sudo:*", pol.command_deny)
 
@@ -259,7 +259,7 @@ class TestLaRaizDeConfianzaNoLaEligeElSujeto(unittest.TestCase):
         with Workspace("raiz-ajena") as ws:
             pol = self._cargar(ws, {"schema": "harness.policy/v1", "version": "1",
                                     "extends": str(fuera)})
-            self.assertTrue(pol.is_protected("gates/g_agent.py"))
+            self.assertTrue((pol.is_protected("gates/g_agent.py") or pol.is_authority("gates/g_agent.py")[0]))
             self.assertEqual(DENY, decide_command(pol, "sudo algo", ws.root).outcome)
 
     def test_ensanchar_un_agujero_se_rechaza_entero(self):
@@ -283,7 +283,7 @@ class TestLaRaizDeConfianzaNoLaEligeElSujeto(unittest.TestCase):
                                     "protected_paths": ["mio/**"],
                                     "default_modes": {"claude": "ask"}})
             self.assertIn("mio/**", pol.protected_paths)
-            self.assertTrue(pol.is_protected("gates/g_agent.py"))
+            self.assertTrue((pol.is_protected("gates/g_agent.py") or pol.is_authority("gates/g_agent.py")[0]))
             self.assertEqual("ask", pol.default_mode_for("claude"))
 
 

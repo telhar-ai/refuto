@@ -10,6 +10,228 @@ histórica no las conservó, se dice.
 
 ---
 
+## 0.8.1 — *sin publicar* · una opción global evadía el emparejamiento, y `find -delete` se aprobaba
+
+Dos huecos medidos el **2026-10-30** contra el guardián vivo de un espacio real, analizando su
+diario de evidencia: **97 698 eventos entre 2026-08-30 y 2026-10-30**. Los dos aprobaban órdenes
+que las reglas ya escritas decían rechazar o consultar. No los encontró una prueba — ninguna
+cubría estas formas.
+
+**Una opción global antes del subcomando rompía el prefijo.** Los patrones (`git push:*`,
+`kubectl apply:*`) se comparaban contra la orden cruda y contra su `forma_normalizada`, que
+reduce el NOMBRE DEL PROGRAMA. Ninguna de las dos quitaba las opciones globales que van entre el
+programa y su subcomando, así que bastaba insertar una para salir del alcance de la regla:
+
+| la regla dice | forma alcanzada | forma que se escapaba |
+|---|---|---|
+| `deny` | `git reset --hard HEAD~5` | `git -C <ruta> reset --hard HEAD~5` → `allow` |
+| `deny` | `git push --force origin main` | `git -C <ruta> push --force origin main` → `allow` |
+| `deny` | `git clean -fdx` | `git -C <ruta> clean -fdx` → `allow` |
+| `ask` | `git push origin main` | `git -C <ruta> push origin main` → `allow` |
+| `ask` | `kubectl apply -f x.yaml` | `kubectl --kubeconfig <ruta> apply …` → `allow` |
+| `ask` | `npm publish` | `npm --prefix <ruta> publish` → `allow` |
+| `ask` | `docker push img` | `docker --context foo push img` → `allow` |
+| `ask` | `terraform apply` | `terraform -chdir=<ruta> apply` → `allow` |
+| `ask` | `gh pr create` | `gh --repo o/r pr create` → `allow` |
+| `ask` | `glab mr create` | `glab --repo o/r mr create` → `allow` |
+
+**Siete de las ocho clases que la política reserva a una persona**, más tres rechazos. `aws`
+resistió sólo porque su patrón lleva comodín y casa en cualquier posición: se salvó por
+redacción, no por diseño.
+
+`core/policy.py::_formas_sin_opciones_globales` genera candidatas sin esas opciones y se prueban
+junto a las dos que ya había. Es `forma_normalizada` extendida del programa a su subcomando:
+comparar contra lo que la orden SIGNIFICA, no contra cómo se escribió. Se calculan una vez por
+orden —no por patrón: con 21 rechazos y 8 consultas serían 29 veces lo mismo— y sólo se comparan
+contra patrones; **nunca se ejecutan**. Como no se sabe si una opción corta consume el token
+siguiente (`-C <ruta>` sí, `-P` no), se generan las dos lecturas y basta que una case: un
+guardián que duda entre dos lecturas de una orden peligrosa no se queda con la cómoda.
+
+El riesgo de este arreglo es **sobre**-emparejar, y por eso sólo se exploran tokens que empiezan
+por `-` y sólo hasta el primero que no lo hace, con cota de 6 opciones y 8 candidatas. `git log
+--grep=push` no genera `git push`: `log` corta ahí.
+
+**`find <ruta> -delete` se aprobaba, dentro y fuera del espacio.** `find` vive en `_LECTORES` y
+con una acción declara `NO_RESOLUBLE`, lo cual es correcto: lo que ejecute no se deriva de sus
+argumentos. Pero `NO_RESOLUBLE` **aprueba** —en la ventana medida, **12 276 de 13 348**— así que
+`find /tmp/x -delete` borraba FUERA del espacio de trabajo. Subir `NO_RESOLUBLE` a consulta no
+era viable: es el **53 %** de las decisiones. El arreglo es más preciso: las RAÍCES que `find`
+recorre sí se derivan, se declaran escrituras probables, y la protección de rutas —que ya existe
+y funciona— se aplica sola. La resolución sigue siendo `NO_RESOLUBLE`, que es la verdad: se sabe
+DÓNDE puede escribir, no QUÉ escribirá. Las raíces son los tokens anteriores a la primera opción
+(`find <rutas…> <expresión>`), no «los tokens sin guion»: con eso, `-name '*.md'` habría entrado
+como ruta.
+
+**Vigilante: `NOT_RUN` en este repositorio.** La verificación fue un banco de **41 casos** que
+vive fuera del árbol, con las regresiones de Claude Code y cinco controles negativos
+(`git log --grep=push`, `git -C … status`, `git -C … log`, `npm run publicar-docs`,
+`echo 'git push'`, todos `allow`): **antes 11 PASS · 30 FALLA; después 41 PASS · 0 FALLA**,
+2026-10-30. Ni `_formas_sin_opciones_globales` ni las raíces de `find` tienen hoy una prueba en
+`tests/` que caiga si el arreglo se retira — `grep -rIn "git -C" tests/` y `grep -rIn
+"_formas_sin_opciones_globales" tests/` no devuelven nada (2026-10-30). La prueba existente
+`tests/adversarial/test_resolucion_r01.py:66` sigue verde porque afirma la resolución
+`NO_RESOLUBLE`, que no cambió: **pasaba antes del arreglo y pasa después**, así que no lo cubre.
+Portarlo al árbol queda abierto.
+
+**Estado del árbol con las tres entradas de arriba dentro**, medido el **2026-10-30**, macOS
+arm64 (Darwin 25.4.0), Python 3.14.6, sobre `37eeaa4`: `python3 refuto.py selftest` →
+**1463/1463**, `OK (skipped=12, expected failures=4)`, 842,7 s, código de salida 0.
+`check_stdlib_only`, `check_schemas`, `check_wiring`, `check_citas` (65 citas) y
+`check_mediciones` (8 mediciones) en verde. Las omitidas son 12 y no las 19 que citan los
+mensajes de `3c788a2` y `37eeaa4`: la diferencia son las 7 del diferencial de la regla de validez
+de `CERTIFICATE-SPEC §11`, que se declaran `NOT_RUN` cuando `HICON_BIN` no apunta al verificador
+Rust. Es una diferencia de entorno, no de árbol; las **pasadas** coinciden.
+
+---
+
+## 0.8.0 — *sin publicar* · codex como runtime de primera clase, y dos huecos que aprobaban en silencio
+
+Medido el **2026-10-30** contra **Codex CLI 0.166.0**, cableándolo a un espacio gobernado. El
+guardián lo dejaba pasar en los dos sitios que más importan.
+
+**`apply_patch` escribía en rutas protegidas.** La herramienta de escritura de Codex no es
+`Write`: es `apply_patch`, y su carga **no** trae `file_path` ni `content` — trae el sobre del
+parche dentro de `tool_input.command`. El guardián no la declaraba escritura, no le extraía ruta,
+y el derivador de efectos no entiende el sobre. Extremo a extremo: **un fichero se creó en una
+ruta protegida, y después se borró por la misma vía**. Es el modo de fallo que la docstring de
+`normalize` ya nombraba: «el día que uno renombre un campo, el guardián deja de gobernar en
+silencio y aprobando».
+
+Se añade el dialecto `codex` —medido **isomorfo** al de Claude Code: mismas claves, mismo
+anidamiento, misma respuesta `hookSpecificOutput`—, se declara `apply_patch` como escritura, se
+leen los destinos del sobre (`Add`, `Update`, `Delete` y **`Move to`**, porque mover algo a una
+ruta protegida es escribir en ella) y se evalúan **todos**: basta que uno esté protegido para no
+aprobar. Mirar sólo el primero dejaba pasar un parche cuyo SEGUNDO fichero fuera protegido.
+
+**`ask` fallaba ABIERTO.** Misma orden, mismo gancho, las tres decisiones:
+
+| el guardián dice | Codex reporta | efecto real |
+|---|---|---|
+| `allow` | Failed | ejecuta (acierta por accidente) |
+| `ask` | Failed | **EJECUTA** |
+| `deny` | Blocked | bloquea |
+
+Codex sólo honra `deny`. `ask` significa «lo decide una persona», y no lo decidía nadie:
+verificado con `aws sts get-caller-identity`, el guardián dijo `ask` y la orden se ejecutó.
+Afectaba a las **8 clases** que la política reserva a una persona —`git push`, `kubectl apply`,
+`terraform apply`, `npm publish`, `aws`, `docker push`, `gh pr`, `glab mr`— y a toda escritura
+cuya ruta no se pudo examinar. Mientras Codex no implemente una tercera respuesta, la única
+traducción honesta de `ask` a su dialecto es `deny`, **diciéndolo en el motivo**: la persona
+sigue decidiendo, pero ejecutando ella la orden. En Claude Code `ask` se queda como estaba,
+porque sí lo honra.
+
+**El marcador heredado duplicaba el contexto.** `INICIO` se compara literal. Al renombrar el
+producto de `harness` a `refuto`, el bloque viejo dejó de reconocerse: en vez de REEMPLAZARSE
+quedó **huérfano**, con el nuevo escrito debajo. Medido en un espacio real: **22 956 B**
+duplicados en `AGENTS.md` y `GEMINI.md` que además **contradecían** al bloque vigente, y que un
+agente lee de arriba abajo y se cree. `CLAUDE.md` se salvó por usar importación `@` — es decir,
+el defecto sólo golpeaba a los agentes que nadie estaba usando. A/B con las mismas 5 preguntas:
+**1/5 correctas antes, 5/5 después** de retirarlo. `BLOQUE` reconoce ahora ambos nombres, para
+que el próximo renombrado no duplique.
+
+**`codex` como destino de contexto, y conducible.** `TARGETS` no lo incluía: leía `AGENTS.md` por
+coincidencia de nombre con opencode, y refrescárselo exigía pasar `--agent opencode`, que es
+pedirle al operador que sepa un detalle de implementación para que su agente no lea datos viejos.
+Y `chat` no lo admitía en `--agent`.
+
+**`codex mcp-server` fue retirado.** Documentado en `learn.chatgpt.com/docs/mcp-server.md`: «The
+`codex mcp-server` command and the standalone `codex-mcp-server` binary have been removed.» Hoy
+`codex` lo trata como PROMPT y abre la TUI, así que no responde a `initialize` y el probe
+informaba `STARTABLE` por un defecto propio, no de Codex. Se usa `app-server`, que sí responde.
+
+**Vigilante: `NOT_RUN` en este repositorio.** Banco de **20 casos** fuera del árbol, con
+regresiones de Claude Code y controles negativos —un parche que bloquease todo también habría
+dado verde sin ellos—: **antes 4 PASS · 16 FALLA; después 20 PASS · 0 FALLA**, 2026-10-30.
+`grep -rIn "apply_patch" tests/` no devuelve nada (2026-10-30): ni `_rutas_apply_patch`, ni la
+evaluación de los destinos extra, ni la traducción `ask` → `deny` tienen hoy una prueba que caiga
+si se retiran. Portarlo al árbol queda abierto.
+
+---
+
+## 0.7.4 — *sin publicar* · las palabras comunes de gobierno protegían el código del producto
+
+`policies/**` se acotó el 2026-10-03 por protegerse con `**/`. Las otras seis palabras
+—`evidence`, `evidencia`, `inputs`, `insumos`, `gates`, `verification`, `verificacion`— se
+quedaron, y son **la misma clase de error**: una palabra común del idioma del dominio usada como
+si fuera un nombre reservado.
+
+**Medido sobre el diario del guardián** en un espacio multi-repo real, no sobre un censo de
+directorios: de **4 denegaciones por `**/evidence/**`, 3 eran código fuente del producto y 1
+gobierno** — ~75 % de error, la misma proporción que ya midió `policies/**`. Un módulo del
+producto cuyo dominio ES la evidencia quedaba entero fuera del alcance del agente, incluidos los
+ficheros existentes. Y el espacio **no podía repararlo**: retirar el patrón es inexpresable
+(`ACUMULA` une), y la excepción es `REDUCE` y levanta `HerenciaIrresoluble`.
+
+El cambio tiene dos mitades, porque anclar a secas habría abierto el gobierno anidado del modelo
+SDD:
+
+| lo que se protege | dónde vive ahora | alcance |
+|---|---|---|
+| palabra **suelta** (`evidence`, `gates`…) | `authority_paths` | la raíz de cada espacio gobernado |
+| **forma** de ruta (`sdd/espacios/*/evidencia/**`) | `protected_paths` con `**/` | a cualquier profundidad; cuatro segmentos no colisionan con código |
+
+Medido en el espacio real: **39 directorios** con uno de los 7 nombres, **17 pasan de `deny` a
+`allow`** — 4 código fuente (el defecto) y 13 gobierno, que su dueño devuelve con
+`authority_paths`, que es `ACUMULA`. Es el error **reparable**; el de antes no lo era. Las siete
+retiradas quedan en `RETIRADAS_DE_NORMA` para que `refuto upgrade` nombre el residuo de los
+espacios ya instalados.
+
+**Vigilante:** `tests/adversarial/test_nombres_comunes_anclados.py` (**9 pruebas**, A..F) con
+control negativo: abrir las palabras comunes **no** abre lo que el arnés reserva. El caso anclado
+se prueba con árbol en disco (`TestB`).
+
+**Las 9 pruebas que fijaban la norma anterior a mano.** El cambio las dejó en rojo. Ninguna se
+debilita: cada una afirmaba una LISTA de ayer donde lo que quería afirmar era una PROPIEDAD, y la
+propiedad se deriva. `test_policy.py` (4) — el motivo pasa de `**/evidencia/**` a `evidencia/**`,
+la protección de la RAÍZ es la misma y cambia el patrón que la nombra; los dos casos de palabra
+común salen de `test_protege_A_CUALQUIER_PROFUNDIDAD` y entran **afirmados, no escondidos**, en
+`test_la_palabra_comun_en_un_hijo_NO_GOBERNADO_no_se_protege`. `test_autoridad_por_raiz.py` (1) —
+`TestJ` comparaba contra una lista escrita a mano; ahora es `set(DEFAULT_AUTHORITY) |
+{"solo-esto/**"}`, que prueba la **unión** de `ACUMULA` y no el contenido de la tabla.
+`test_propagacion_de_norma.py` (4) — el constructor de la sonda asumía `**/<un-segmento>/**` y
+fallaba **por sí mismo** con `**/sdd/espacios/*/evidencia/**`; un patrón de directorio se sondea
+con un FICHERO dentro.
+
+**Y 7 pruebas más, todas por el mismo instrumento equivocado.** `is_protected()` sólo consulta
+`protected_paths`, y desde este cambio las palabras comunes viven en `authority_paths`:
+preguntaban por media mitad del vocabulario y recibían `''`, mientras el efectivo seguía
+denegando. Se pregunta por las dos. (`test_efectos_cruzados` 3 · `test_violaciones_refinamiento`
+1 · `test_gates` 2 · `test_attacks` 1.) La sonda de profundidad de `test_gates` usaba
+`repo-hijo/gates/…`, que ya no es gobierno; pasa a `repo-hijo/.harness/policy.json`, nombre que
+el arnés **reserva** y cuyo vocabulario no cambió. Afirmar lo otro sería volver a pedir la regla
+que dejaba inescribible el código del producto.
+
+**Un rechazo de `engine publish` que no nombraba su causa**, y que es por qué lo anterior costó
+dos ciclos de ~14 minutos. `_selftest` resumía la suite con `salida[-1]`, y la última línea de
+ESTA suite no es el veredicto: las pruebas de conformidad imprimen su tabla y la última que corre
+(`T21`) deja escrito `DECISION: DENY (Desvío y fuga neutralizados)`, que es el resultado
+**esperado** de un ataque simulado. Observado dos veces sobre dos commits distintos: la
+publicación decía «la copia no se prueba a sí misma: DENY (Desvío y fuga neutralizados)» —una
+frase que no nombra ninguna prueba roja y que señalaba al guardián, que no tenía nada que ver—
+cuando la causa real eran pruebas en rojo. Ahora devuelve el veredicto de `unittest` y las
+primeras cabeceras `FAIL:`/`ERROR:`, que dicen QUÉ cayó.
+
+**Y el resto del trabajo de 0.7.3, que se había quedado a medio confirmar.** El commit que ancló
+las palabras comunes arrastró `core/policy.py` de una sesión anterior y dejó fuera a sus
+compañeros, produciendo un commit **incoherente**: `core/policy.py` nuevo junto a `core/wire.py`,
+`core/guard.py` y `bin/refuto` viejos. Medido: la suite daba verde sobre el ÁRBOL y
+`engine publish` daba `FAILED` (failures=2) sobre la copia del commit. **Una medición sobre el
+árbol no dice nada del commit mientras los dos no coincidan, y es el commit lo que se publica.**
+Lo confirmado ahí: `bin/refuto` resuelve la cadena de enlaces de `$0` —la instalación
+recomendada deja `~/.local/bin/refuto` apuntando al repositorio, y `dirname` no resuelve enlaces,
+así que `refuto` desde el `PATH` salía 2 con «no encuentro refuto.py» mientras la ruta real
+funcionaba—; el diario emite `run_id`, sin el cual no se puede agrupar lo que hizo **una** sesión
+ni casar sus decisiones con su `session/open` y su `session/close` (medido: las 37 136 decisiones
+de un diario real no llevaban ninguna); y `wire_claude_repos` excluye el área del propio arnés
+del plan, porque `.harness/` está en `protected_paths` y el plan se proponía a sí mismo una
+escritura que la política del mismo espacio rechaza (1 destino de 111).
+
+Suite: **1463/1463** (`python3 refuto.py selftest`), frente a 1453/1453. Reparto: unit 611 ·
+contract 79 · selftest 97 · adversarial 676. 2026-10-05, macOS arm64 (Darwin 25.4.0), Python
+3.14.6.
+
+---
+
 ## 0.7.3 — *sin publicar* · `--dry-run` escribía, y el informe callaba lo que escribía
 
 Encontrado el **2026-10-04** por sorpresa, no por una prueba: intentando una SIMULACIÓN de
