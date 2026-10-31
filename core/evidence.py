@@ -108,7 +108,7 @@ def _eslabon(previo: str, evento: dict) -> str:
     return hashlib.sha256((previo + "\n" + _canonico(evento)).encode("utf-8")).hexdigest()
 
 
-def _ultima_linea(fh) -> str:
+def _ultima_linea(fh, *, errors: str = "replace") -> str:
     """La última línea no vacía, leyendo desde el FINAL. `fh` abierto en binario.
 
     La versión anterior hacía `read_text().splitlines()` del diario entero, y `append_event` la
@@ -133,7 +133,7 @@ def _ultima_linea(fh) -> str:
         # Con más de una línea completa, la última ya está entera: sólo si `pos == 0` puede
         # la primera estar cortada, y entonces no hay más fichero que leer.
         if len(lineas) > 1 or pos == 0:
-            return lineas[-1].decode("utf-8", "replace") if lineas else ""
+            return lineas[-1].decode("utf-8", errors) if lineas else ""
     return ""
 
 
@@ -196,13 +196,28 @@ def append_event(workspace: Path, event: dict) -> None:
     # carrera. Se abre en binario porque `_ultima_linea` busca desde el final.
     with path.open("a+b") as fh:
         with _exclusivo(fh):
-            ultima = _ultima_linea(fh)
+            # Una cola sin LF no es una transacción de append confirmada. Añadir detrás
+            # concatenaba dos objetos JSON y destruía también el siguiente registro.
+            fh.seek(0, os.SEEK_END)
+            if fh.tell():
+                fh.seek(-1, os.SEEK_END)
+                if fh.read(1) != b"\n":
+                    raise ValueError("cola del diario incompleta: se conserva sin añadir eventos")
+            ultima = _ultima_linea(fh, errors="strict")
             previo = GENESIS
             if ultima:
                 try:
-                    previo = str(json.loads(ultima).get("h") or GENESIS)
-                except json.JSONDecodeError:
-                    previo = GENESIS
+                    tail = json.loads(ultima)
+                except json.JSONDecodeError as exc:
+                    raise ValueError("cola del diario ilegible: se conserva sin añadir eventos") from exc
+                if not isinstance(tail, dict):
+                    raise ValueError("la cola del diario no es un evento objeto")
+                if ("h" in tail) != ("prev" in tail):
+                    raise ValueError("la cola del diario tiene metadatos de cadena incompletos")
+                if "h" in tail:
+                    if not isinstance(tail["prev"], str) or tail["h"] != _eslabon(tail["prev"], tail):
+                        raise ValueError("la huella de la cola no coincide: se conserva sin añadir eventos")
+                    previo = tail["h"]
             record = {"ts": now(), **event, "prev": previo}
             record["h"] = _eslabon(previo, record)
             line = json.dumps(record, ensure_ascii=False) + "\n"
@@ -386,7 +401,13 @@ def verificar_cadena(workspace: Path, esperado: str = "", *,
     cicatrices: list = []
     previo, n, legado = GENESIS, 0, 0
     vistas: set = set()
-    for i, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        return {"ok": False, "estado": ROTA, "eventos": 0, "legado": 0, "rota_en": -1,
+                "motivo": f"el diario no es UTF-8 legible: {exc}", "cabeza": GENESIS,
+                "cicatrices": []}
+    for i, line in enumerate(lines):
         if not line.strip():
             continue
         try:
@@ -395,8 +416,16 @@ def verificar_cadena(workspace: Path, esperado: str = "", *,
             return {"ok": False, "estado": ROTA, "eventos": n, "legado": legado, "rota_en": i,
                     "motivo": f"la línea {i + 1} no es JSON legible: {exc}", "cabeza": previo,
                     "cicatrices": []}
+        if not isinstance(ev, dict) or (("h" in ev) != ("prev" in ev)):
+            return {"ok": False, "estado": ROTA, "eventos": n, "legado": legado, "rota_en": i,
+                    "motivo": f"la línea {i + 1} no es un evento objeto con metadatos de cadena completos",
+                    "cabeza": previo, "cicatrices": cicatrices}
         n += 1
         if "h" not in ev or "prev" not in ev:
+            if previo != GENESIS:
+                return {"ok": False, "estado": ROTA, "eventos": n, "legado": legado, "rota_en": i,
+                        "motivo": f"la línea {i + 1} pierde el encadenamiento después de eventos encadenados",
+                        "cabeza": previo, "cicatrices": cicatrices}
             legado += 1
             continue
         if ev["prev"] != previo:

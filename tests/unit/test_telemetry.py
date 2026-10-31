@@ -99,19 +99,88 @@ class TestEmparejarDecisionConSuResultado(unittest.TestCase):
                        res(ts=en(T0), entrada_digest="x")])
         self.assertEqual(0, s["herramientas_s"]["emparejados"])
 
-    def test_con_varias_decisiones_del_mismo_digest_gana_la_mas_reciente_anterior(self):
-        """El mismo comando ejecutado dos veces: su resultado pertenece a la última, no a la
-        primera — con la primera, la duración incluiría el hueco entre ambas."""
+    def test_varias_decisiones_del_mismo_digest_son_ambiguas(self):
+        """Sin identidad de invocación no se sabe cuál terminó, aun con timestamps."""
         eventos = [dec(ts=en(T0), entrada_digest="r"),
                    dec(ts=en(T0 + timedelta(seconds=30)), entrada_digest="r"),
                    res(ts=en(T0 + timedelta(seconds=31)), entrada_digest="r")]
         s = T.resumen(eventos)
-        self.assertAlmostEqual(1.0, s["herramientas_s"]["mediana"], places=1)
+        self.assertIsNone(s["herramientas_s"]["mediana"])
+        self.assertEqual(1, s["herramientas_s"]["ambiguos"])
+
+    def test_una_decision_no_se_reutiliza_para_dos_resultados(self):
+        s = T.resumen([dec(entrada_digest="x"),
+                       res(ts=en(T0 + timedelta(seconds=1)), entrada_digest="x"),
+                       res(ts=en(T0 + timedelta(seconds=2)), entrada_digest="x")])
+        self.assertEqual(0, s["herramientas_s"]["emparejados"])
+        self.assertEqual(2, s["herramientas_s"]["ambiguos"])
+
+    def test_no_se_cruzan_espacios_runtimes_o_sesiones(self):
+        for campo in ("_espacio", "runtime", "run_id", "tool"):
+            with self.subTest(campo=campo):
+                s = T.resumen([dec(entrada_digest="x", **{campo: "uno"}),
+                               res(entrada_digest="x", **{campo: "dos"})])
+                self.assertEqual(0, s["herramientas_s"]["emparejados"])
+
+    def test_una_denegacion_no_se_cuenta_como_ejecucion(self):
+        s = T.resumen([dec(entrada_digest="x", outcome="deny"),
+                       res(entrada_digest="x")])
+        self.assertEqual(0, s["herramientas_s"]["emparejados"])
 
     def test_se_declara_cuantas_decisiones_no_tienen_resultado(self):
         s = T.resumen([dec(entrada_digest="a"), dec(entrada_digest="b")])
         self.assertEqual(2, s["herramientas_s"]["decisiones_sin_resultado"])
         self.assertEqual(0, s["herramientas_s"]["resultados"])
+
+
+class TestIdentidadNativa(unittest.TestCase):
+    def test_mismo_contenido_dos_llamadas_no_se_confunden(self):
+        eventos = [dec(entrada_digest="same", session_id="s", tool_call_id="a"),
+                   dec(entrada_digest="same", session_id="s", tool_call_id="b"),
+                   res(entrada_digest="same", session_id="s", tool_call_id="b",
+                       ts=en(T0 + timedelta(seconds=2))),
+                   res(entrada_digest="same", session_id="s", tool_call_id="a",
+                       ts=en(T0 + timedelta(seconds=10)))]
+        s = T.resumen(eventos)["herramientas_s"]
+        self.assertEqual(2, s["emparejados_por_identidad"])
+        self.assertEqual(0, s["emparejados_por_entrada"])
+        self.assertEqual(12.0, s["total"])
+
+    def test_identidad_incompleta_no_recae_en_digest(self):
+        s = T.resumen([dec(entrada_digest="same", tool_call_id="a"),
+                       res(entrada_digest="same", tool_call_id="a")])["herramientas_s"]
+        self.assertEqual(0, s["emparejados"])
+
+    def test_call_id_reutilizado_en_otra_sesion_no_se_empareja(self):
+        for field in ("session_id", "runtime", "_espacio"):
+            with self.subTest(field=field):
+                a = dec(entrada_digest="same", tool_call_id="a", session_id="s")
+                b = res(entrada_digest="same", tool_call_id="a", session_id="s")
+                a[field], b[field] = "one", "two"
+                self.assertEqual(0, T.resumen([a, b])["herramientas_s"]["emparejados"])
+
+    def test_replay_de_resultado_no_reutiliza_una_decision(self):
+        kw = {"entrada_digest": "same", "tool_call_id": "a", "session_id": "s"}
+        s = T.resumen([dec(**kw), res(**kw), res(**kw)])["herramientas_s"]
+        self.assertEqual(0, s["emparejados"])
+        self.assertEqual(2, s["ambiguos"])
+
+    def test_mismo_id_con_otra_entrada_o_herramienta_se_declara_conflicto(self):
+        for field in ("entrada_digest", "tool"):
+            with self.subTest(field=field):
+                kw = {"entrada_digest": "same", "tool_call_id": "a", "session_id": "s"}
+                a, b = dec(**kw), res(**kw)
+                b[field] = "different"
+                s = T.resumen([a, b])["herramientas_s"]
+                self.assertEqual(0, s["emparejados"])
+                self.assertEqual(1, s["conflictos_identidad"])
+
+    def test_duplicado_sin_timestamp_no_desaparece_del_denominador(self):
+        kw = {"entrada_digest": "same", "tool_call_id": "a", "session_id": "s"}
+        a = res(**kw)
+        del a["ts"]
+        s = T.resumen([dec(**kw), res(**kw), a])["herramientas_s"]
+        self.assertEqual(0, s["emparejados"])
 
 
 class TestDesenlace(unittest.TestCase):

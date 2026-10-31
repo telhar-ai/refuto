@@ -94,8 +94,9 @@ class AgentSpec:
     def normalize_event(self, raw: dict) -> dict | None:
         """Traduce un evento del flujo nativo al evento canónico de refuto.
 
-        Devuelve `None` para eventos que no interesan. El esquema canónico está en
-        `schemas/event.schema.json`.
+        Devuelve `None` para eventos que no interesan. Esta interfaz singular no
+        acredita normalización sin pérdida de bloques ni un esquema canónico
+        universal publicado; véanse ADR-0009 y ADR-0022.
         """
         return None
 

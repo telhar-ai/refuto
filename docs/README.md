@@ -18,7 +18,7 @@
 | [`lifecycle/`](lifecycle/) | las 13 fases, con entrada, salida, puertas y revisión humana |
 | [`agents/`](agents/) | los 22 roles, sus contratos, y cómo se elige el runtime |
 | [`../SUPPORT_MATRIX.md`](../SUPPORT_MATRIX.md) | salida de ejemplo de `refuto docs`, fechada |
-| [`decisions/`](decisions/) | 8 ADRs, cada uno con qué lo haría cambiar |
+| [`decisions/`](decisions/) | decisiones arquitectónicas y sus condiciones de revisión |
 
 ## Verificar
 

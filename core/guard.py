@@ -241,6 +241,24 @@ def _rutas_apply_patch(texto: str) -> list:
     return rutas
 
 
+def _native_identity(runtime: str, payload: dict) -> dict:
+    """Reported hook identity, not authenticated provenance or logical retry identity.
+
+    Only the documented Claude/Codex top-level fields are mapped. No ID is minted
+    from input content, wall time or the last observed operation. Other dialects
+    remain uninstrumented until their native contract is verified.
+    """
+    values = {"session_id": None, "tool_call_id": None}
+    if runtime in ("claude", "codex"):
+        for field, native in (("session_id", "session_id"), ("tool_call_id", "tool_use_id")):
+            value = payload.get(native)
+            if isinstance(value, str) and value.strip() and len(value) <= 512:
+                values[field] = value
+    values["identity_status"] = ("reported" if all(values.values()) else
+                                  "incomplete" if any(values.values()) else "unavailable")
+    return values
+
+
 def normalize(runtime: str, payload: dict) -> dict:
     """Carga del gancho → hecho canónico. Sin esto, cada runtime traería su propia política.
 
@@ -269,6 +287,7 @@ def normalize(runtime: str, payload: dict) -> dict:
     campos = {n: _campo(payload, shape[n])
               for n in ("tool", "path", "content", "command", "cwd")}
     return {
+        **_native_identity(runtime, payload),
         "runtime": runtime,
         # `payload` sin una sola clave significa que el gancho no entregó carga: modo directo
         # (`--path`), invocación de prueba, o un runtime que no manda cuerpo. No es lo mismo que
@@ -477,8 +496,10 @@ def _digest_de(policy) -> str:
 
 
 def digest_entrada(fact: dict) -> str:
-    """Identifica la OPERACIÓN, no el evento: los mismos 16 hex en la decisión previa y en el
-    resultado posterior, que es lo que permite casarlos.
+    """Digest de la entrada, NO identidad de una invocación.
+
+    Dos llamadas distintas pueden producir los mismos 16 hex. Los lectores deben
+    preferir identidades nativas y declarar por separado la correlación por entrada.
 
     Se calcula sobre el hecho ya normalizado —herramienta, ruta, orden, contenido— y no sobre la
     carga cruda del gancho, porque `PreToolUse` y `PostToolUse` no traen la misma envoltura pero
@@ -530,6 +551,9 @@ def _emit_event(workspace: Path, fact: dict, decision, kind: str,
             # dato, no una ausencia: medido el 2026-10-04, las 37 136 decisiones del diario de
             # telhar no llevaban ninguna, asi que ningun analisis podia ir por sesion.
             "run_id": os.environ.get("HARNESS_RUN_ID", ""),
+            "session_id": fact.get("session_id"),
+            "tool_call_id": fact.get("tool_call_id"),
+            "identity_status": fact.get("identity_status", "unavailable"),
             # QUÉ política decidió esto. Sin el digest, un evento dice qué regla denegó pero
             # no de qué política efectiva salió — y con herencia esa pregunta pasa de ociosa a
             # central: la regla pudo venir del cliente, y el cliente pudo cambiar después.
@@ -681,8 +705,9 @@ def _main_post(opts, raw: str) -> int:
 
     El diario sabía qué se permitió y no si funcionó: un `allow` y una orden rota eran
     indistinguibles, y sin dos marcas de tiempo tampoco había forma de saber cuánto tardó nada.
-    Este evento aporta las dos cosas — `entrada_digest` lo casa con su decisión, y la diferencia
-    entre los dos `ts` ES la duración real de la herramienta.
+    Conserva la identidad nativa cuando existe. El digest identifica contenido, no
+    una llamada: el lector declara por separado identidad reportada y correlación
+    por entrada. Ninguna de las dos demuestra por sí sola el efecto externo.
 
     Un fallo aquí nunca puede costarle el trabajo a nadie: esto corre DESPUÉS de que la
     herramienta haya actuado, así que bloquear no desharía nada y sí rompería la sesión.
@@ -704,6 +729,10 @@ def _main_post(opts, raw: str) -> int:
             "kind": KIND_RESULTADO,
             "runtime": fact["runtime"],
             "tool": fact["tool"],
+            "run_id": os.environ.get("HARNESS_RUN_ID", ""),
+            "session_id": fact.get("session_id"),
+            "tool_call_id": fact.get("tool_call_id"),
+            "identity_status": fact.get("identity_status", "unavailable"),
             "entrada_digest": digest_entrada(fact),
             "ok": res["ok"],
             "exit_code": res["exit_code"],

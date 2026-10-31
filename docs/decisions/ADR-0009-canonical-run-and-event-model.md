@@ -6,6 +6,12 @@
 
 ## Contexto
 
+**Alcance de implementación (2026-10-31):** esta decisión define un objetivo; no acredita
+que todos los adapters produzcan hoy el esquema mostrado ni que la ruta de ejecución
+consuma todos sus normalizadores. La captura nativa implementada y sus límites se
+especifican en [ADR-0022](ADR-0022-recuentos-e-identidad-observada.md). No se debe inferir
+replay completo, causalidad universal o costes normalizados de esta decisión documental.
+
 Refuto coordina múltiples runtimes de agentes (Claude Code, Kiro CLI, Google Antigravity, Gemini CLI, OpenCode). Históricamente, cada agente emitía sus propios formatos de salida (JSON Lines propietarios, eventos ACP v1 o texto no estructurado en stdout/stderr). Esto dificultaba la reproducibilidad forense, la comparación cross-agent y el análisis cuantitativo de sesiones.
 
 ## Problema
