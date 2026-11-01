@@ -585,6 +585,11 @@ class RefutoProtocolServer:
         content = params.get("content", "")
 
         fact = {
+            # Quien pregunta puede declarar para qué runtime. Sin él la respuesta es la
+            # estricta: las concesiones acotadas a un runtime no aplican a una consulta que no
+            # dice cuál es. Decirlo aquí evita que el MCP conteste `allow` por una concesión que
+            # la sesión real no podría usar.
+            "runtime": params.get("runtime", ""),
             "tool": tool,
             "path": target if (action in ("write", "edit", "fs_write") or not command) else "",
             "command": command or (target if action in ("exec", "command", "bash") else ""),

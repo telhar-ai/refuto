@@ -14,6 +14,7 @@
 | [0018](ADR-0018-el-motor-que-juzga-no-es-el-arbol-que-se-edita.md) | El motor que juzga es una copia publicada de un commit, no el árbol de trabajo; y cada decisión dice lo que costó y cómo acabó · **2026-09-28** | que el coste de arrancar un proceso por decisión obligue a un guardián residente |
 | [0019](ADR-0019-discontinuidades-declaradas.md) | Una rotura de la cadena que una persona reconoce se declara —con su causa, su línea y sus digests— y la cadena queda `CICATRIZADA`, ni íntegra ni rota · **2026-09-28** | que el ancla aprenda a certificar tramos en vez de la cadena entera |
 | [0020](ADR-0020-la-regla-habla-de-la-elevacion.md) | Pedir privilegio se rechaza por lo que la orden HACE, no por el nombre del binario; ceder privilegio no es pedirlo · **2026-09-29** | que el agente deje de correr con el uid del operador |
+| [0024](ADR-0024-la-concesion-nombra-su-canal-y-su-runtime.md) | Una concesión declara qué canal levanta (`lifts`) y en qué runtimes vale (`runtimes`); los dos obligatorios, y sin ellos no concede nada · **2026-10-31** | que un runtime ofrezca a un gancho la forma de PROVOCAR una aprobación humana, y no sólo de responder a la suya |
 
 Todos están fechados el 2026-08-27 salvo donde se diga otra cosa. Un ADR no caduca solo: si una
 decisión ya no describe el código, lo que corresponde es una revisión fechada dentro del propio

@@ -84,10 +84,17 @@ class TestTravesiaDeRutas(unittest.TestCase):
                 self.assertEqual(d.outcome, DENY, target)
 
     def test_ruta_absoluta_fuera_del_espacio(self):
+        """Desde el 2026-10-31 `/etc/**` está en `external_never` y se consulta antes que
+        la travesía genérica: mismo `DENY`, regla más específica. Se afirman las dos, y se
+        conserva un objetivo que sigue cayendo por travesía para no perder esa cobertura."""
         with Workspace("adv-abs") as ws:
             d = decide_write(self.p, ws.root, "/etc/hosts")
             self.assertEqual(d.outcome, DENY)
-            self.assertEqual(d.rule, "fuera-del-espacio")
+            self.assertEqual(d.rule, "/etc/**")
+
+            otro = decide_write(self.p, ws.root, str(ws.home / "fuera-cualquiera.txt"))
+            self.assertEqual(otro.outcome, DENY)
+            self.assertEqual(otro.rule, "fuera-del-espacio")
 
     @unittest.skipIf(os.name == "nt", "enlaces simbólicos: comportamiento distinto en Windows")
     def test_enlace_simbolico_que_apunta_al_juez(self):

@@ -149,14 +149,33 @@ class CodexAdapter(AgentSpec):
         el protocolo está resuelto sería el mismo verde falso de antes con otra excusa.
         """
         modo = "workspace-write" if policy.protected_paths else "read-only"
+        aprobacion = "on-request" if policy.command_ask else "never"
         doc = {
             "_generado": "refuto policy compile — no editar; se sobrescribe",
+            # Lo primero que se lee, porque es lo que decide cómo leer el resto. Medido el
+            # 2026-10-31 sobre un espacio real: el operador creía que este fichero configuraba
+            # Codex. No lo hace, y nada en el fichero lo decía — el `_nota` de abajo sólo
+            # desmentía la lista de órdenes, así que por omisión se leía que los otros dos
+            # campos SÍ se aplicaban. Un documento de gobierno que se malinterpreta por lo que
+            # calla es un documento que miente.
+            "_ESTE_FICHERO_NO_CONFIGURA_CODEX": (
+                "Codex no lee este fichero: su nombre no aparece en el binario y no se "
+                "referencia desde ~/.codex/config.toml. `sandbox_mode` y `approval_policy` de "
+                "abajo son lo que ESTA POLÍTICA PIDE, no lo que está aplicado. Se aplican en la "
+                "INVOCACIÓN, y hasta que alguien las pase, no rigen."),
+            "_como_se_aplica_de_verdad": (
+                f"codex --sandbox {modo} --ask-for-approval {aprobacion}   ·   o fijándolo en "
+                f"~/.codex/config.toml. Cuidado: un proyecto con `trust_level = \"trusted\"` "
+                f"ahí no equivale a estas dos banderas."),
+            "_como_se_comprueba": (
+                "grep -nE 'sandbox_mode|approval_policy|trust_level' ~/.codex/config.toml"),
             "sandbox_mode": modo,
-            "approval_policy": "on-request" if policy.command_ask else "never",
+            "approval_policy": aprobacion,
             "_ordenes_denegadas": list(policy.command_deny),
             "_nota": ("Codex no expresa una lista de denegación de órdenes: el control es el "
                       "sandbox más la aprobación. Las órdenes de `command_deny` se listan aquí "
-                      "para el operador; NO las aplica el agente."),
+                      "para el operador; NO las aplica el agente. Lo que SÍ se aplica en Codex "
+                      "es el guardián por `PreToolUse`, si `.codex/hooks.json` está instalado."),
         }
         unenforceable = [
             "guardia de contenido (secretos, datos personales) antes de escribir: el gancho "

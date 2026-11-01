@@ -10,6 +10,221 @@ histórica no las conservó, se dice.
 
 ---
 
+## 0.8.4 — *sin publicar* · el control de secretos medía el clon, no el repositorio
+
+Medido el **2026-10-31**, macOS 25.4.0, al intentar publicar la rama de 0.8.3. El `pre-push`
+retuvo el empujón con `gitleaks → FAIL: leaks found: 1`. El secreto es **real** y **no es de
+este repositorio**: un JWT en `infra/load/helpers.js`, en un commit de importación inicial de
+mayo, perteneciente a otro proyecto cuyas refs vivían en el mismo clon como segundo remoto.
+
+`gitleaks detect --source <ruta>` recorre por defecto `--all --full-history`, y `--all`
+incluye `refs/remotes/*`. El control decía «un secreto en el árbol» y respondía «un secreto en
+algún objeto de este clon»:
+
+| sujeto | commits alcanzables | fugas |
+|---|---|---|
+| `HEAD` — lo que el empujón publicaría | 20 | **0** |
+| `gitlab/main` | 11 | **0** |
+| ramas locales (`--branches --tags`) | 50 | **0** |
+| todas las refs (`--all`, lo que medía) | 241 | 1, de otro proyecto |
+
+Quien recibía ese rojo no podía cerrarlo desde aquí. Un control que no se puede cerrar se acaba
+saltando —el propio preflight ofrece `HARNESS_SIN_PREFLIGHT=1`, que apaga los quince—, y
+entonces no protege de nada.
+
+**El acotamiento es `HEAD --branches --tags`, y el `HEAD` no es decorativo.** Acotar sólo con
+`--branches --tags` parecía más limpio y es una trampa: `actions/checkout` deja un **HEAD
+desprendido** en los eventos `pull_request`, sin ninguna rama local. Medido sobre un
+repositorio con un secreto en su único commit, en HEAD desprendido:
+
+```
+--log-opts "--branches --tags"        →  scanned ~0 bytes   ·  no leaks found   (rc=0)
+--log-opts "HEAD --branches --tags"   →  scanned ~37 bytes  ·  leaks found: 1   (rc=1)
+```
+
+Una puerta de seguridad verde **porque no mira nada**, justo en el único sitio donde corre
+sobre código de terceros. Es la regla que este proyecto aplica a todo lo demás —un ámbito vacío
+nunca aprueba— y la habría roto el propio arreglo.
+
+Vigilado por cinco pruebas en `tests/unit/test_preflight_criterio.py`, con sus dos controles:
+sin acotar, el secreto ajeno **sí** retiene el empujón (si deja de hacerlo, la prueba del
+acotamiento no mide nada); y un secreto **propio**, alcanzable desde `HEAD`, lo sigue
+reteniendo (acotar el sujeto no puede degenerar en apagar el control).
+
+**No se afirma** que el JWT de ese otro proyecto esté resuelto. Sigue en su historial y se
+arregla rotándolo, que es turno de una persona; lo que cambia es que ya no retiene un empujón
+sobre el que nadie puede actuar.
+
+Además, `tests/adversarial/test_sobre_apply_patch.py` usaba como ejemplo de referencia
+correcta a un secreto dos identificadores que nombran a un proveedor concreto. Lo detectó el
+control `nombres-de-producto` del mismo preflight, antes de publicar: en un repositorio
+público, enumerar de qué servicios hay credenciales es casi tan útil para quien busca como el
+valor, y la selección delata — nombrar uno dice que alguien lo tenía delante. Pasan a
+`MI_SERVICIO_API_KEY`.
+
+Y el control volvió a disparar sobre **este mismo párrafo**, que en su primera versión citaba
+el identificador para explicar que lo quitaba. La excepción razonada —«lo nombro justo para
+decir que lo retiro»— publica exactamente lo mismo. Se corrigió el texto; no se añadió
+`CHANGELOG.md` a `_MARCAS_PERMITIDAS`, que es como un control se desarma: un fichero cada vez,
+siempre con un buen motivo.
+
+### Y lo que encontró CI, que el verde local no podía descartar
+
+`tests/adversarial/test_autoridad_por_raiz.py::TestD_TravesiaNoEscapa` afirmaba la regla
+`fuera-del-espacio` para los cuatro vectores de travesía de `test_salir_del_espacio`. Pasaba en macOS y **cayó en
+los dos trabajos de Linux** (3.10 y 3.13), 1613/1614, con
+`AssertionError: 'fuera-del-espacio' != '/etc/**'`.
+
+El vector `a/../../../etc/hosts` sube **dos** niveles netos —el `a/` cancela uno de los tres
+`..`—, y dónde aterriza eso no lo decide la política: lo decide dónde el sistema pone sus
+directorios temporales. En Linux el espacio cuelga tan arriba que la escritura llega a
+`/etc/hosts`, y desde `external_never` la deniega `/etc/**`, que es la regla más específica.
+En macOS el mismo `..` se queda dentro de `/private/var/folders/…` y nunca alcanza `/etc`.
+
+El veredicto —`DENY`— era idéntico en ambos; lo que cambiaba era cuál de las dos protecciones
+lo explicaba. La expectativa pasa a **derivarse en ejecución** de dónde aterriza de verdad la
+ruta, en vez de admitir cualquiera de las dos reglas: una aserción que acepta dos respuestas
+deja de distinguir «aterrizó donde creo» de «aterrizó en otro sitio», que es exactamente lo
+que este vector mide.
+
+Es el mismo modo de fallo que [`R-04`](docs/decisions/) ya documentó —una propiedad medida en
+un solo sistema de archivos— y la razón de que la matriz de CI no sea decorativa.
+
+---
+
+## 0.8.3 — *sin publicar* · el sobre de `apply_patch` se leía como órdenes de consola
+
+Medido el **2026-10-31** contra el guardián vivo del espacio `telhar`, a partir de su diario de
+evidencia. Dos defectos opuestos en el mismo canal, y el canal **no tenía ninguna prueba**: es
+por eso que sobrevivieron los dos.
+
+Codex envía `apply_patch` con el sobre entero —directivas y contenido del fichero— en
+`tool_input.command`, y `evaluate` se lo pasaba a `decide_command`.
+
+**Ruido que bloquea.** Un fichero de pruebas de TypeScript que levanta dos servidores HTTP en
+loopback:
+
+```ts
+const base = `http://127.0.0.1:${(trap.address()).port}`;
+```
+
+```
+ask  regla=programa-sin-resolver
+     «el nombre del programa se construye en tiempo de ejecución
+      («http://127.0.0.1:${(trap.address()).port»)»
+```
+
+y en Codex ese `ask` viaja como `deny`, así que el parche no se aplicó. El mismo evento registró
+`escrituras_probadas: ["=", "new", "resolve", "s.close", "server.listen", "trap.listen", "{"]` —
+tokens de TypeScript tomados por nombres de programa y por destinos de redirección, cada uno
+comparado contra las rutas protegidas. **Ninguno casó por suerte, no por diseño**: un fichero
+fuente que contuviera la cadena correcta habría producido un rechazo con un motivo falso.
+
+Es el mismo eje que el documento aquí citado de 0.6.x, un canal más allá: un control debe saltar
+con la ACCIÓN, no con el TEXTO.
+
+**Silencio que deja pasar.** `block_secret_content` se aplica en `decide_write`, que recibe
+`fact["content"]`. `apply_patch` no trae `tool_input.content` —su contenido viaja dentro del
+sobre, igual que sus rutas—, así que el control existía, se ejecutaba, y en este canal no miraba
+nada:
+
+```
+Write        src/config.ts     const k = "AKIA…"   →  deny
+apply_patch  (mismo fichero)  +const k = "AKIA…"   →  ALLOW
+```
+
+Es el mismo defecto que `_rutas_apply_patch` cerró para las rutas, un campo más allá.
+
+**El arreglo es un solo movimiento:** tratar el sobre como lo que es. No se pasa a
+`decide_command` —no es una orden—, y sus líneas añadidas se extraen con
+`_contenido_apply_patch` y viajan a `decide_write` junto con sus rutas. No se retira ninguna
+comprobación: lo que se retira es un análisis que no era aplicable. Sólo cuentan las líneas `+`,
+porque contar las `-` haría que **quitar** una credencial del código se rechazara por contener
+una credencial.
+
+`tests/adversarial/test_sobre_apply_patch.py`, 15 pruebas, con las dos mitades juntas a
+propósito: sin la segunda, la primera se satisface desactivando el control.
+
+**Y una regresión propia, cazada por la suite.** Al hacer que `decide_command` reciba `runtime`,
+`evaluate` lo leía con `fact["runtime"]`. `core/protocol.py` construye el hecho **a mano** para
+responder `policy/decide` por MCP y no lo traía, así que el servidor devolvía «Internal server
+error: 'runtime'» a toda consulta con orden. Se lee con `.get` —vacío es el defecto estricto— y
+la consulta MCP puede ahora declarar su `runtime`. La cazó `tests/contract`, que ejerce el
+servidor de verdad; ninguna prueba unitaria la habría visto.
+
+**El artefacto de Codex dejaba creer que configuraba algo.** `.codex/harness-policy.json` lleva
+`sandbox_mode` y `approval_policy`, y su `_nota` sólo desmentía la lista de órdenes — así que por
+omisión se leía que esos dos campos sí se aplicaban. Medido: **no se aplican**. El nombre del
+fichero no aparece en el binario de Codex 0.166.0 y no se referencia desde `~/.codex/config.toml`;
+se aplican en la invocación (`--sandbox`, `--ask-for-approval`). El fichero generado lo dice ahora
+en su primera clave, con la orden que sí los aplica y la que lo comprueba. Ojo con
+`trust_level = "trusted"` en `config.toml`: **no** equivale a esas dos banderas.
+
+## 0.8.2 — *sin publicar* · la concesión no alcanzaba al canal que la necesitaba
+
+Medido el **2026-10-31** sobre el espacio `telhar`, a raíz de una sesión de Codex que no podía
+publicar ni pidiéndolo.
+
+**`privilege_grants` no levantaba `command_ask`.** `core.grants.buscar` se consultaba sólo dentro
+del bucle de `command_deny` y en el bloque de elevación no nombrada. El bucle de `command_ask` no
+preguntaba nunca. Como `git push:*` y `glab mr:*` son `command_ask`, **ninguna concesión podía
+autorizarlos** — comprobado añadiendo a la política real una concesión que nombraba la orden:
+
+```
+[sin concesión] git push -u origin fix/…   →  ask   regla=git push:*
+[con concesión] git push -u origin fix/…   →  ask   regla=git push:*
+```
+
+En Claude Code el defecto quedaba tapado: `ask` pregunta y una persona aprueba. En Codex no.
+Medido contra el binario de Codex 0.166.0, no contra su documentación:
+
+```
+PreToolUse hook returned unsupported permissionDecision:ask
+PreToolUse hook returned unsupported permissionDecision:allow
+```
+
+Su `PreToolUse` implementa `deny` y nada más, así que `ask` viaja como `deny` (`core/dialect.py`
+ya lo declaraba). Resultado: desde Codex, publicar no tenía **ningún** camino declarado — ni
+ejecutar, ni pedirlo. Un control que no ofrece camino legítimo se rodea, que es el argumento con
+el que nace `core/grants.py`.
+
+Y la pieza que `core/dialect.py` nombraba como pendiente —el evento `PermissionRequest` de
+Codex— **no arregla esto**: ese evento se dispara cuando Codex ya decidió preguntar, así que un
+gancho puede auto-responder su pregunta, no provocarla. Implementarlo no le devuelve a refuto la
+capacidad de pedir una decisión humana desde `PreToolUse`; esa capacidad no existe en Codex hoy.
+
+**Dos campos nuevos, los dos obligatorios**, porque abrir el canal sin ellos habría cambiado dos
+cosas que nadie pidió. No tienen valor por omisión: una lista vacía no concede, igual que `roles`
+o `hosts`.
+
+- **`runtimes`** — los runtimes no tienen el mismo repertorio de respuestas, así que la misma
+  concesión no significa lo mismo en todos. En Codex le devuelve a la publicación un camino que
+  no tenía; en Claude Code le **quita** la pregunta que allí sí funcionaba. Sin este campo,
+  arreglar un runtime degradaba el otro en silencio.
+- **`lifts`** — `("ask", "deny")`: qué canal levanta. Lo encontró una prueba adversarial de este
+  mismo cambio. Los patrones son `fnmatch` y **no tienen negación**, así que una concesión con
+  `commands: ["git push *"]`, escrita para la consulta `git push:*`, levantaba también el rechazo
+  `git push --force:*`:
+
+  ```
+  allow  git push -u origin rama          ← lo que se quería
+  allow  git push --force origin main     ← lo que no
+  allow  git push -f origin main
+  ```
+
+  «Empuja, pero no forzado» no se puede escribir como patrón. Sin `lifts`, la única forma de dar
+  camino a la publicación era abrir de paso el empuje forzado, que es exactamente lo que
+  `command_deny` existe para impedir.
+
+`decide_command` recibe `runtime` por parámetro y no por el entorno, al contrario que el rol: el
+guardián ya lo tiene en `--runtime` y es el dato con el que serializa la respuesta, así que leerlo
+de una variable permitiría que la decisión y su traducción hablaran de runtimes distintos.
+
+**Migración.** Toda concesión existente queda mal formada hasta que declare los dos campos, y una
+concesión mal formada no concede nada y se enumera (`problemas_declarados`). Medido el 2026-10-31:
+en esta máquina hay **2 concesiones vivas**, las dos en `telhar`, las dos `lifts: ["deny"]` y
+`runtimes: ["*"]`.
+
 ## 0.8.1 — *sin publicar* · una opción global evadía el emparejamiento, y `find -delete` se aprobaba
 
 Dos huecos medidos el **2026-10-30** contra el guardián vivo de un espacio real, analizando su

@@ -310,12 +310,82 @@ DEFAULT_WRITABLE = (
 #: `/tmp` y `/private/tmp` NO son una redundancia: en macOS `/tmp` es un enlace a
 #: `private/tmp`, pero el guardián compara la CADENA que pasó la herramienta, y son dos
 #: cadenas distintas para el mismo sitio. Quitar una deja media puerta abierta.
+#:
+#: DECISIÓN DEL OPERADOR, 2026-10-31: los agentes trabajan entre repositorios, así que el
+#: disco de trabajo se abre y el límite pasa a ser `DEFAULT_EXTERNAL_NEVER`. Antes de este
+#: cambio la lista eran las cuatro raíces de abajo —la memoria y el cuaderno del agente—,
+#: que `/**` subsume y que se conservan documentadas porque explican POR QUÉ existía la
+#: llave: sin ellas, `external_write_allow` parece una concesión y era una necesidad.
+#:
+#:     "~/.claude/projects/*/memory/**"      DURADERO · la memoria persistente
+#:     "~/.claude/projects/*/artifacts/**"   DURADERO · lo que una persona leerá después
+#:     "/tmp/claude-*/**"                    EFÍMERO · el cuaderno, podado a diario
+#:     "/private/tmp/claude-*/**"            EFÍMERO · el mismo sitio, como lo escribe macOS
+#:
+#: Este cambio NO se podía hacer desde la política de un espacio: la llave es `REDUCE` y
+#: añadir una raíz da `HerenciaIrresoluble`. Es deliberado — abrir el disco es exactamente
+#: la clase de decisión que no debe poder tomar un fichero de proyecto. Un espacio que
+#: quiera la postura anterior la recupera declarando las cuatro raíces de arriba, que es
+#: `REDUCE` y por tanto legítimo.
 DEFAULT_EXTERNAL_WRITE = (
-    "~/.claude/projects/*/memory/**",     # DURADERO · la memoria persistente de Claude Code
-    "~/.claude/projects/*/artifacts/**",  # DURADERO · lo que una persona leerá después
-    "/tmp/claude-*/**",                   # EFÍMERO · el cuaderno; se poda a diario a las 00:00
-    "/private/tmp/claude-*/**",           # EFÍMERO · el mismo sitio, como lo escribe macOS
+    "~/Documents/**",
+    "~/.claude/projects/*/memory/**",
+    "~/.claude/projects/*/artifacts/**",
+    "/tmp/claude-*/**",
+    "/private/tmp/claude-*/**",
 )
+
+#: Lo que no se escribe fuera del espacio AUNQUE `external_write_allow` lo cubra.
+#:
+#: Hacía falta una tercera lista porque las dos que había no podían expresarlo. Fuera del
+#: espacio no hay ruta relativa, así que `protected_paths` —que compara contra el árbol— no
+#: se evalúa: `decide_write` resolvía la rama externa y volvía antes de llegar a él. Medido
+#: el 2026-10-31 con `external_write_allow = ["/**"]`: 9 de 9 objetivos salían `allow`,
+#: entre ellos `~/.ssh/id_rsa` y `~/.codex/config.toml`.
+#:
+#: E invertir el orden no servía: el orden es INTENCIONAL. `**/.claude/**` está protegido y
+#: la memoria del agente vive debajo; la excepción existe justamente para ganarle. Por eso
+#: esto no es «protegido» ni «excepción», sino una tercera cosa: lo que ninguna concesión
+#: levanta. Por el mismo motivo se nombra con brocha fina —`**/.claude/settings.json`, no
+#: `**/.claude/**`—: cerrar de más aquí le quita al agente su memoria, que es lo que
+#: `external_write_allow` vino a darle.
+DEFAULT_EXTERNAL_NEVER = (
+    # Credenciales y claves. No hay escritura legítima de un agente en ninguna de estas.
+    "**/.ssh/**", "**/.aws/**", "**/.gnupg/**",
+    "**/.git-credentials", "**/.netrc", "**/credentials",
+    "**/.env", "**/.env.*", "**/*.pem", "**/*.key",
+    # El gobierno de CUALQUIER espacio. El guardián del espacio activo compara contra su
+    # propio árbol, así que los demás quedan sin vigilante en cuanto se abre una raíz que
+    # los contenga; aquí es donde se les devuelve uno.
+    "**/.harness/policy.json", "**/.harness/bin/**", "**/.harness/evidence/**",
+    # Dónde cada runtime guarda a quién obedece —en `~/.codex/config.toml` vive el
+    # `trusted_hash` del gancho—. Escribir esto es desengancharse a uno mismo.
+    "**/.codex/**", "**/.gemini/**", "**/.agents/**", "**/.kiro/**", "**/.aidlc/**",
+    "**/.claude/settings.json", "**/.claude/settings.local.json", "**/.claude.json",
+    # Configuración del sistema.
+    "/etc/**",
+)
+
+def _formas_de_ruta(target: str) -> tuple:
+    """La misma ruta tal como la resuelve el sistema y tal como la escribe una persona.
+
+    `decide_write` resuelve el objetivo con `realpath`, y en macOS eso devuelve
+    `/private/etc/...`, `/private/var/...`, `/private/tmp/...`. Los patrones, en cambio, se
+    escriben como se leen: `/etc/**`, `/tmp/**`. Comparar sólo la forma resuelta deja media
+    puerta abierta en cada sentido, y las dos se midieron el 2026-10-31:
+
+    - una PROTECCIÓN que no aplica: `/etc/**` no casaba nunca contra `/private/etc/sudoers`,
+      y `T21` escribía en `sudoers`;
+    - una CONCESIÓN que no aplica: `~/Documents/**` no casaba contra la forma resuelta, así
+      que el permiso declarado no servía.
+
+    El módulo ya conocía la trampa —`DEFAULT_EXTERNAL_WRITE` duplica `/tmp` y `/private/tmp`
+    a mano— pero la resolvía enumerando, que sólo cubre lo que alguien se acordó de escribir.
+    """
+    if target.startswith("/private/"):
+        return (target, target[len("/private"):])
+    return (target, "/private" + target)
+
 
 #: Rutas cuyo contenido nunca debe leerse, aunque el agente pida.
 DEFAULT_SECRET_READ_DENY = (
@@ -460,6 +530,9 @@ class Policy:
     writable_paths: tuple = DEFAULT_WRITABLE
     #: Lo único escribible fuera del espacio. Vacío significa: nada.
     external_write_allow: tuple = DEFAULT_EXTERNAL_WRITE
+    #: Lo que `external_write_allow` NO puede levantar. ACUMULA por herencia: es una
+    #: protección, y una protección que un hijo pudiera retirar no protege.
+    external_never: tuple = DEFAULT_EXTERNAL_NEVER
     secret_read_deny: tuple = DEFAULT_SECRET_READ_DENY
     #: Nombres de variable de entorno con forma de credencial. Se consultan en el MISMO canal
     #: de lectura que `secret_read_deny`: `printenv X` y `cat .env` son la misma pregunta por
@@ -546,30 +619,56 @@ class Policy:
                 return pattern
         return ""
 
+    @staticmethod
+    def _formas(absolute: Path) -> tuple:
+        """Las formas en que la MISMA ruta puede escribirse en este sistema."""
+        return _formas_de_ruta(str(absolute))
+
+    def external_forbids(self, absolute: Path) -> str:
+        """El patrón de `external_never` que cierra esa ruta ABSOLUTA, o cadena vacía.
+
+        Se consulta ANTES que `external_allows`: es lo que ninguna concesión levanta. Se
+        compara contra la ruta ya resuelta por el mismo motivo que allí — una prohibición
+        que se esquivara con un enlace simbólico no sería una prohibición.
+
+        `**/x` no casa con `/x` en `fnmatch` —el patrón exige al menos un separador—, así
+        que se prueba también sin el prefijo. Sin esto, una ruta en la raíz del disco
+        escaparía de la lista por un detalle del comparador y no por una decisión.
+        """
+        for pattern in self.external_never:
+            pat = os.path.expanduser(pattern)
+            for target in _formas_de_ruta(str(absolute)):
+                if fnmatch.fnmatch(target, pat):
+                    return pattern
+                if pat.startswith("**/") and fnmatch.fnmatch(target, "/" + pat[3:]):
+                    return pattern
+        return ""
+
     def external_allows(self, absolute: Path) -> str:
         """El patrón que autoriza esa ruta ABSOLUTA fuera del espacio, o cadena vacía.
 
         Se compara contra la ruta ya resuelta, igual que todo lo demás: una excepción que se
         pudiera alcanzar con un enlace simbólico no sería una excepción, sería la puerta.
         """
-        target = str(absolute)
         for pattern in self.external_write_allow:
             pat = os.path.expanduser(pattern)
-            if fnmatch.fnmatch(target, pat):
-                return pattern
-            # `raiz/**` cubre además la raíz misma, que `fnmatch` no da por incluida.
-            #
-            # La comparación literal no bastaba cuando la raíz lleva comodín. Con
-            # `/tmp/claude-*/**` el prefijo es `/tmp/claude-*`, y `target == prefijo` no casa
-            # nunca contra `/tmp/claude-abc`: el patrón se quedaba cubriendo el CONTENIDO del
-            # cuaderno del agente y no el cuaderno. Sin analizar efectos de órdenes el defecto
-            # era invisible —`mkdir` no se miraba—; con `core.effects` mirando, `mkdir` sobre
-            # la raíz declarada empezó a denegarse. Se compara también por patrón.
-            if pat.endswith("/**"):
-                raiz = pat[:-3]
-                if fnmatch.fnmatch(target, raiz) or target == raiz \
-                        or target.startswith(raiz + "/"):
+            for target in _formas_de_ruta(str(absolute)):
+                if fnmatch.fnmatch(target, pat):
                     return pattern
+                # `raiz/**` cubre además la raíz misma, que `fnmatch` no da por incluida.
+                #
+                # La comparación literal no bastaba cuando la raíz lleva comodín. Con
+                # `/tmp/claude-*/**` el prefijo es `/tmp/claude-*`, y `target == prefijo` no
+                # casa nunca contra `/tmp/claude-abc`: el patrón se quedaba cubriendo el
+                # CONTENIDO del cuaderno del agente y no el cuaderno. Sin analizar efectos de
+                # órdenes el defecto era invisible —`mkdir` no se miraba—; con `core.effects`
+                # mirando, `mkdir` sobre la raíz declarada empezó a denegarse. Se compara
+                # también por patrón.
+                if pat.endswith("/**"):
+                    raiz = pat[:-3]
+                    if fnmatch.fnmatch(target, raiz) or target == raiz \
+                            or target.startswith(raiz + "/"):
+                        return pattern
         return ""
 
     def is_secret_env(self, nombre: str) -> str:
@@ -1236,6 +1335,21 @@ def _decidir_escritura(policy: Policy, workspace: Path, target: str,
     except ValueError:
         # Fuera del espacio. Se rechaza, salvo las raíces que el espacio declara suyas: la
         # memoria del agente y su cuaderno no son del proyecto y nunca van a estar dentro.
+        #
+        # Primero lo que ninguna concesión levanta. Va ANTES de `external_allows` porque
+        # evaluado después nunca podría ganarle —el mismo motivo por el que la excepción va
+        # antes de lo protegido, en la rama de dentro—, y porque aquí no hay ruta relativa:
+        # `protected_paths` no llega a consultarse y sin esta lista no queda nada.
+        nunca = policy.external_forbids(resolved)
+        if nunca:
+            return Decision(DENY, rule=nunca,
+                            reason=f"la escritura resuelve a {resolved}, que coincide con "
+                                   f"«{nunca}»: está fuera del espacio Y es de lo que no se "
+                                   f"escribe ni estando declarado. `external_write_allow` "
+                                   f"abre el cuaderno y la memoria del agente; no credenciales, "
+                                   f"ni el gobierno de otro espacio, ni el fichero donde este "
+                                   f"runtime guarda a quién obedece. Si de verdad hay que "
+                                   f"tocarlo, lo hace una persona.")
         externo = policy.external_allows(resolved)
         if externo:
             return _revisar_contenido(policy, content, donde=str(resolved),
@@ -1635,8 +1749,14 @@ def _segmentos(command: str) -> list:
     return out
 
 
-def decide_command(policy: Policy, command: str, workspace: Path | None = None) -> Decision:
+def decide_command(policy: Policy, command: str, workspace: Path | None = None, *,
+                   runtime: str = "") -> Decision:
     """Decide si una orden de consola se ejecuta, se pregunta o se rechaza.
+
+    `runtime` llega por parámetro y no por el entorno, al contrario que el rol: el guardián ya
+    lo recibe en `--runtime` y es el dato con el que serializa la respuesta, así que leerlo otra
+    vez de una variable permitiría que la decisión y su traducción hablaran de runtimes
+    distintos. Vacío significa «no se dijo», y una concesión que no nombre `"*"` no lo cubre.
 
     Dos comprobaciones, y la primera es la que faltaba
     ---------------------------------------------------
@@ -1757,7 +1877,8 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
                 # saber que hay rechazo convertiría la tabla en una lista de permisos, que es otra
                 # cosa y más ancha.
                 from core.grants import buscar
-                v = buscar(policy, cmd, rol=os.environ.get("HARNESS_ROLE", ""), efectos=ef)
+                v = buscar(policy, cmd, canal="deny", rol=os.environ.get("HARNESS_ROLE", ""),
+                           runtime=runtime, efectos=ef)
                 if v.concesion is not None:
                     if v.concesion.human_approval == "once-per-grant":
                         return Decision(ALLOW, rule=f"concesion:{v.concesion.id}",
@@ -1784,9 +1905,39 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
                     continue
                 if (_matches_command(cmd, pattern) or _matches_command(normalizado, pattern)
                         or any(_matches_command(f, pattern) for f in candidatas)):
+                    # La excepción nombrada vale aquí igual que en el bucle de rechazo, y hasta
+                    # el 2026-10-31 no se consultaba. El defecto que eso dejaba abierto, medido
+                    # sobre telhar: `git push:*` y `glab mr:*` son `command_ask`, así que NINGUNA
+                    # concesión podía autorizarlos. En Claude Code se tapaba solo —`ask`
+                    # pregunta—, pero en Codex `ask` viaja como `deny` (ver `core/dialect.py`,
+                    # medido contra 0.166.0), y entonces publicar no tenía camino declarado
+                    # alguno: ni ejecutar, ni pedirlo. Un control sin camino legítimo se rodea.
+                    from core.grants import buscar
+                    v = buscar(policy, cmd, canal="ask", rol=os.environ.get("HARNESS_ROLE", ""),
+                               runtime=runtime, efectos=ef)
+                    if v.concesion is not None:
+                        if v.concesion.human_approval == "once-per-grant":
+                            return Decision(ALLOW, rule=f"concesion:{v.concesion.id}",
+                                            reason=f"«{pattern}» se consulta por omisión y esta "
+                                                   f"orden está {v.motivo}. La concesión vive en "
+                                                   f"la política, que el agente no puede "
+                                                   f"escribir: por eso vale como aprobación.",
+                                            **marca)
+                        peor_ask = Decision(ASK, rule=f"concesion:{v.concesion.id}",
+                                            reason=f"«{pattern}» se consulta por omisión y esta "
+                                                   f"orden está {v.motivo}, con aprobación por "
+                                                   f"instancia: lo decide una persona cada vez.",
+                                            **marca)
+                        break
+                    # El mismo diagnóstico que los otros dos bucles: «no hay concesión» y «la hay
+                    # y es de otro runtime» se arreglan distinto.
+                    extra = ""
+                    if v.descartes:
+                        extra = (" Hay concesión(es) que describen esta orden y no aplican: "
+                                 + " · ".join(v.descartes[:3]))
                     peor_ask = Decision(ASK, rule=pattern,
                                         reason=f"«{pattern}» sale del repositorio o cambia algo "
-                                               f"remoto: lo decide una persona.", **marca)
+                                               f"remoto: lo decide una persona.{extra}", **marca)
                     break
     # ── eleva, y ningún patrón lo nombraba ───────────────────────────────────────────
     #
@@ -1813,7 +1964,8 @@ def decide_command(policy: Policy, command: str, workspace: Path | None = None) 
             # NOMBRADO se podría conceder y uno no nombrado no: la misma orden, autorizable o no
             # según qué binario use, que es justo la dependencia que este bloque quita.
             from core.grants import buscar
-            v = buscar(policy, cmd, rol=os.environ.get("HARNESS_ROLE", ""), efectos=ef)
+            v = buscar(policy, cmd, canal="deny", rol=os.environ.get("HARNESS_ROLE", ""),
+                           runtime=runtime, efectos=ef)
             if v.concesion is not None:
                 if v.concesion.human_approval == "once-per-grant":
                     return Decision(ALLOW, rule=f"concesion:{v.concesion.id}",

@@ -241,6 +241,30 @@ def _rutas_apply_patch(texto: str) -> list:
     return rutas
 
 
+def _contenido_apply_patch(texto: str) -> str:
+    """Las líneas que un sobre de `apply_patch` AÑADE, para poder mirarlas.
+
+    Medido el 2026-10-31 contra el guardián vivo: una clave con forma de credencial dentro de un
+    sobre pasaba sin que nadie la mirara.
+
+        apply_patch  *** Add File: src/config.ts  +const k = "AKIA…"   →  allow
+        Write        src/config.ts                 const k = "AKIA…"   →  deny
+
+    `block_secret_content` se aplica en `decide_write`, que recibe `fact["content"]`; y
+    `apply_patch` no trae `tool_input.content` —su contenido viaja DENTRO del sobre, igual que
+    sus rutas—. Así que el control existía, se aplicaba, y en este canal no veía nada. Es el
+    mismo defecto que `_rutas_apply_patch` cerró para las rutas, un campo más allá.
+
+    Sólo las líneas `+`: lo que el parche BORRA no se escribe, y contarlo haría que quitar una
+    credencial del código se rechazara por contener una credencial.
+    """
+    fuera = []
+    for linea in (texto or "").splitlines():
+        if linea.startswith("+") and not linea.startswith("+++"):
+            fuera.append(linea[1:])
+    return "\n".join(fuera)
+
+
 def _native_identity(runtime: str, payload: dict) -> dict:
     """Reported hook identity, not authenticated provenance or logical retry identity.
 
@@ -312,7 +336,10 @@ def normalize(runtime: str, payload: dict) -> dict:
         "paths": (_rutas_apply_patch(campos["command"][0])
                   if campos["tool"][0] == "apply_patch"
                   else ([campos["path"][0]] if campos["path"][0] else [])),
-        "content": campos["content"][0],
+        # El contenido de un sobre viaja DENTRO de `command`, no en `tool_input.content`.
+        # Sin esto `decide_write` recibía cadena vacía y `block_secret_content` no miraba nada.
+        "content": (_contenido_apply_patch(campos["command"][0]) or campos["content"][0]
+                    if campos["tool"][0] == "apply_patch" else campos["content"][0]),
         "command": campos["command"][0],
         "cwd": campos["cwd"][0],
         # El sujeto. Ningún runtime lo trae en la carga del gancho, así que se lee del
@@ -355,8 +382,44 @@ def evaluate(policy: Policy, workspace: Path, fact: dict):
     from core.policy import Decision
 
     decisiones = []
-    if fact["command"]:
-        decisiones.append((decide_command(policy, fact["command"], workspace), "command"))
+    # ── un sobre de `apply_patch` NO es una orden de consola ─────────────────────────
+    #
+    # Su `command` es el sobre entero: directivas y contenido del fichero. Analizarlo con la
+    # gramática del shell no es conservador, es ruido — y el ruido cae en los dos sentidos.
+    #
+    # Medido el 2026-10-31 con el guardián vivo, sobre un fichero de pruebas de TypeScript que
+    # levanta dos servidores HTTP en loopback:
+    #
+    #     const base = `http://127.0.0.1:${(trap.address()).port}`;
+    #
+    #     → ask  regla=programa-sin-resolver
+    #       «el nombre del programa se construye en tiempo de ejecución
+    #        («http://127.0.0.1:${(trap.address()).port»)»
+    #     → y en Codex ese `ask` viaja como `deny`: el parche no se aplicó.
+    #
+    # El mismo evento registró `escrituras_probadas: ["=", "new", "resolve", "s.close",
+    # "server.listen", "trap.listen", "{"]`. Son tokens de TypeScript tomados por nombres de
+    # programa y por destinos de redirección, y cada uno se comparó contra las rutas protegidas.
+    # Ninguno casó —por suerte, no por diseño—: un fichero fuente que contuviera la cadena
+    # correcta habría producido un rechazo con un motivo falso.
+    #
+    # Lo que el sobre SÍ tiene se evalúa por su canal, que es el de escritura: sus rutas salen de
+    # `_rutas_apply_patch` y sus líneas añadidas de `_contenido_apply_patch`, y las dos cosas
+    # pasan por `decide_write` unas líneas más abajo — incluido `block_secret_content`, que en
+    # este canal no veía nada hasta hoy.
+    #
+    # No se pierde ninguna comprobación: lo que se retira es un análisis que no era aplicable, no
+    # un control. Si algún runtime enviara una orden de verdad junto al sobre, aparecería como
+    # `command` de una herramienta que no es `apply_patch`.
+    es_sobre = fact.get("tool") == "apply_patch"
+    if fact["command"] and not es_sobre:
+        # `.get` y no `[...]`: `normalize` siempre pone `runtime`, pero `core/protocol.py`
+        # construye el hecho a mano para responder `policy/decide` por MCP y no lo traía. Con
+        # acceso directo eso era un `KeyError` que el servidor devolvía como «Internal server
+        # error: 'runtime'». Vacío es el defecto ESTRICTO: una concesión que no nombre `"*"`
+        # no cubre una consulta que no dice desde dónde viene.
+        decisiones.append((decide_command(policy, fact["command"], workspace,
+                                          runtime=fact.get("runtime", "")), "command"))
     for _ruta_extra in fact.get("paths", [])[1:]:
         # Un sobre de `apply_patch` con varios ficheros: cada destino se evalúa por separado
         # y la composición se queda con el más restrictivo. Mirar sólo el primero dejaba

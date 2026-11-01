@@ -842,19 +842,28 @@ def build_brief(workspace: Path, *, runtime: str, role_id: str = "",
 
         anfitrion = _plat.node()
         rol_actual = role_id or ""
+        # Se filtra TAMBIÉN por runtime. Desde el 2026-10-31 una concesión declara en cuáles
+        # vale, y listar aquí una que es de otro sería prometer autoridad que esta sesión no
+        # tiene — el mismo motivo por el que se filtran las caducadas y las de otro host, y el
+        # peor sitio donde hacerlo: lo que diga el informe se toma por cierto el resto de la
+        # sesión.
         vigentes = [c for c in cargar(policy)
                     if not c.problemas() and not c.caducada(date.today())
                     and any(p == "*" or p == anfitrion for p in c.hosts)
-                    and any(p == "*" or p == rol_actual for p in c.roles)]
+                    and any(p == "*" or p == rol_actual for p in c.roles)
+                    and any(p == "*" or p == runtime for p in c.runtimes)]
         if vigentes:
-            L += ["**Concesiones de privilegio vigentes para ti en esta máquina.** Levantan un "
-                  "rechazo concreto y nada más: fuera de la forma que declaran, la regla general "
-                  "sigue en pie. Si la orden que necesitas no cae en ninguna, el camino es "
-                  "pedirla, no rodearla.", ""]
+            L += ["**Concesiones de privilegio vigentes para ti en esta máquina.** Levantan una "
+                  "restricción concreta y nada más: fuera de la forma que declaran, la regla "
+                  "general sigue en pie. Si la orden que necesitas no cae en ninguna, el camino "
+                  "es pedirla, no rodearla.", ""]
             for c in vigentes:
                 cual = "se ejecuta" if c.human_approval == "once-per-grant" \
                     else "lo confirma una persona cada vez"
-                L += [f"- `{c.id}` — {' · '.join(c.commands)} · efectos `{c.effects}`"
+                canal = {("ask",): "levanta la CONSULTA (no el rechazo)",
+                         ("deny",): "levanta el RECHAZO",
+                         }.get(tuple(c.lifts), f"levanta {' y '.join(c.lifts)}")
+                L += [f"- `{c.id}` — {' · '.join(c.commands)} · {canal} · efectos `{c.effects}`"
                       + (" (verificados: si la orden escribe algo, la concesión NO aplica)"
                          if c.effects == "read-only" else "")
                       + f" · {cual} · vigente hasta {c.expires}"

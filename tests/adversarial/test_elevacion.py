@@ -377,6 +377,7 @@ class TestElCaminoLegitimo(unittest.TestCase):
         import platform
         base = Policy.default()
         grant = {"id": "diagnostico", "roles": ["*"], "hosts": [platform.node()],
+                 "runtimes": ["*"], "lifts": ["deny"],
                  "commands": ["sudo -n true", "doas -n true", "sudo -n launchctl list*"],
                  "effects": "read-only", "human_approval": "each-time",
                  "expires": "2099-12-31", "evidence": "prueba"}

@@ -142,6 +142,11 @@ REGLAS = {
     # una decisión que alguien reservó a una persona.
     "command_ask": ACUMULA,
     "network_rules": ACUMULA,
+    # `external_never` es lo que ninguna concesión levanta. Si un hijo pudiera retirar una
+    # entrada, bastaría con heredar para recuperar la escritura sobre credenciales y sobre
+    # el gobierno de otros espacios — y el agujero sería invisible en revisión, porque el
+    # hijo se leería como «declara menos», no como «abre más».
+    "external_never": ACUMULA,
 
     # Lo que ABRE un agujero en lo protegido. El hijo puede cerrar agujeros del padre, nunca
     # abrir otros: un agujero heredado en silencio a través de dos capas es indetectable en
