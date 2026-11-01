@@ -153,12 +153,12 @@ class TestLaCredencialDentroDelSobre(_ConSobre):
         """Sólo cuentan las líneas `+`. Contar las `-` haría irreparable un secreto filtrado."""
         sobre = ("*** Begin Patch\n*** Update File: src/config.ts\n"
                  '-const k = "AKIAIOSFODNN7EXAMPLE";\n'
-                 '+const k = process.env.AWS_ACCESS_KEY_ID;\n*** End Patch')
+                 '+const k = process.env.MI_SERVICIO_API_KEY;\n*** End Patch')
         self.assertEqual(ALLOW, self._decidir(sobre).outcome)
 
     def test_referenciar_un_secreto_sigue_siendo_la_forma_correcta(self):
         d = self._decidir(_sobre(("Add File", "src/config.ts",
-                                  ['const k = process.env.AWS_SECRET_ACCESS_KEY;'])))
+                                  ['const k = process.env.MI_SERVICIO_API_KEY;'])))
         self.assertEqual(ALLOW, d.outcome)
 
 
