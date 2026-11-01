@@ -19,8 +19,10 @@ bloqueado es lo declarado de antemano, con su motivo», y que eso no degenere en
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import subprocess  # nosec B404 — enumerar el árbol rastreado con git ES la medición
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -324,6 +326,144 @@ class TestElPreflightSeDeclaraEntero(unittest.TestCase):
                             f"«{c.nombre}» ejecuta «{arg}», que git no rastrea: quien clone el "
                             f"repositorio no lo tendrá, y el control no protege a nadie salvo "
                             f"a la máquina donde se escribió")
+
+
+# ── el sujeto del control de secretos ────────────────────────────────────────────────
+#: Un identificador con forma de credencial que `gitleaks` SÍ reconoce, construido en piezas.
+#:
+#: Dos restricciones lo obligan. La primera: la clave de ejemplo de AWS que usa el resto de la
+#: suite está en la lista blanca de `gitleaks` y da «no leaks found», así que con ella esta
+#: prueba sería vacua en el sentido peor: verde porque no mide. Medido el 2026-10-31.
+#: La segunda: escribir la cadena entera y literal en un fichero del repositorio la convierte
+#: en lo que esta prueba finge, y el propio guardián rechaza esa escritura, con razón — rechazó
+#: una primera versión de este mismo comentario por citar la clave de ejemplo.
+_PAT_SINTETICO = "glpat-" + "AbCdEfGhIjKlMnOpQrSt"
+
+
+class TestElControlDeSecretosMideElRepositorioYNoElClon(unittest.TestCase):
+    """`gitleaks detect --source <ruta>` recorre **todas** las refs del almacén de objetos.
+
+    Un clon con un segundo remoto —otro proyecto, un fork, una base de la que se derivó— trae
+    su historia entera a ese almacén. El control decía «un secreto en el árbol» y en realidad
+    respondía «un secreto en algún objeto de este clon», que no es lo mismo y no es lo que se
+    publica.
+
+    Medido el 2026-10-31 en este repositorio: 20 commits alcanzables desde `HEAD`, 241 desde
+    todas las refs, 189 de ellos de otro proyecto. El control retuvo el empujón por un secreto
+    de ese otro proyecto — real, pero ajeno a lo que refuto publica, y por tanto imposible de
+    arreglar desde aquí. Un control que no se puede cerrar se acaba saltando, y entonces no
+    protege de nada.
+
+    La prueba de abajo lleva su propio control positivo: sin acotar, el secreto ajeno SÍ
+    aparece. Sin esa mitad, un `gitleaks` que dejara de detectar cualquier cosa haría pasar la
+    otra mitad sin medir nada.
+    """
+
+    def _git(self, repo: Path, *args: str):
+        return subprocess.run(["git", *args], cwd=str(repo),            # nosec B603,B607
+                              capture_output=True, timeout=60, **TEXT_IO)
+
+    def _repo_con_ref_ajena(self, base: Path) -> Path:
+        """Un repositorio limpio en `HEAD` y un secreto colgando de una ref de otro remoto."""
+        repo = base / "clon"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", "main")
+        self._git(repo, "config", "user.email", "prueba@example-org")
+        self._git(repo, "config", "user.name", "prueba")
+        (repo / "limpio.txt").write_text("nada que ocultar\n", encoding="utf-8")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "propio")
+        # La historia ajena cuelga de `refs/remotes/ajeno/dev` y NO es alcanzable desde `HEAD`,
+        # igual que las 189 del otro proyecto en el clon real.
+        self._git(repo, "checkout", "-q", "--orphan", "ajeno")
+        self._git(repo, "rm", "-rq", "--cached", ".")
+        (repo / "limpio.txt").unlink()
+        (repo / "config.py").write_text(f'TOKEN = "{_PAT_SINTETICO}"\n', encoding="utf-8")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "importación inicial de otro proyecto")
+        sha = (self._git(repo, "rev-parse", "HEAD").stdout or "").strip()
+        self._git(repo, "update-ref", "refs/remotes/ajeno/dev", sha)
+        self._git(repo, "checkout", "-q", "main")
+        self._git(repo, "branch", "-q", "-D", "ajeno")
+        return repo
+
+    def _gitleaks(self, repo: Path, argv_extra: list) -> int:
+        p = subprocess.run(["gitleaks", "detect", "--no-banner", "--redact",   # nosec B603,B607
+                            "--source", str(repo), *argv_extra],
+                           cwd=str(repo), capture_output=True, timeout=300, **TEXT_IO)
+        return p.returncode
+
+    def _preparar(self) -> Path:
+        if shutil.which("gitleaks") is None:
+            self.skipTest("`gitleaks` no está en el PATH: NOT_EXECUTABLE, que no es PASS")
+        base = Path(tempfile.mkdtemp(prefix="refuto-gl-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        return self._repo_con_ref_ajena(base)
+
+    def test_sin_acotar_el_secreto_AJENO_retiene_el_empujon(self):
+        """Control positivo. Si esto deja de encontrarlo, la prueba de abajo no mide nada."""
+        repo = self._preparar()
+        self.assertNotEqual(0, self._gitleaks(repo, []),
+                            "sin acotar, `gitleaks` tiene que ver la ref ajena; si no la ve, "
+                            "el control positivo de esta prueba está roto")
+
+    def test_acotado_al_sujeto_del_empujon_el_secreto_ajeno_no_cuenta(self):
+        repo = self._preparar()
+        self.assertEqual(0, self._gitleaks(repo, list(PF.ACOTADO_AL_EMPUJON)),
+                         "con el sujeto acotado a lo que se empuja, un secreto que cuelga de "
+                         "la ref de otro proyecto no puede retener este empujón")
+
+    def test_y_un_secreto_PROPIO_sigue_reteniendo_el_empujon(self):
+        """El acotamiento no puede degenerar en apagar el control."""
+        repo = self._preparar()
+        (repo / "mio.py").write_text(f'TOKEN = "{_PAT_SINTETICO}"\n', encoding="utf-8")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "esto sí es mío")
+        self.assertNotEqual(0, self._gitleaks(repo, list(PF.ACOTADO_AL_EMPUJON)),
+                            "acotar el sujeto no es apagar el control: un secreto alcanzable "
+                            "desde `HEAD` tiene que seguir parando el empujón")
+
+    def test_en_HEAD_desprendido_el_ambito_no_se_queda_vacio(self):
+        """La trampa del propio arreglo, y la razón de que `HEAD` vaya delante.
+
+        `actions/checkout` deja HEAD desprendido en los eventos `pull_request`: no hay ninguna
+        rama local. Acotar sólo con `--branches --tags` haría que el control escaneara 0 bytes
+        y declarara «no leaks found» — verde porque no mira, que es la forma de fallo que este
+        repositorio existe para impedir.
+        """
+        if shutil.which("gitleaks") is None:
+            self.skipTest("`gitleaks` no está en el PATH: NOT_EXECUTABLE, que no es PASS")
+        base = Path(tempfile.mkdtemp(prefix="refuto-gl-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        repo = base / "ci"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", "main")
+        self._git(repo, "config", "user.email", "prueba@example-org")
+        self._git(repo, "config", "user.name", "prueba")
+        (repo / "config.py").write_text(f'TOKEN = "{_PAT_SINTETICO}"\n', encoding="utf-8")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "con secreto")
+        self._git(repo, "checkout", "-q", "--detach", "HEAD")
+        self._git(repo, "branch", "-q", "-D", "main")
+
+        solo_ramas = ["--log-opts", "--branches --tags"]
+        self.assertEqual(0, self._gitleaks(repo, solo_ramas),
+                         "si esto dejara de salir verde, el ámbito ya no estaría vacío y esta "
+                         "prueba habría perdido su sujeto")
+        self.assertNotEqual(0, self._gitleaks(repo, list(PF.ACOTADO_AL_EMPUJON)),
+                            "el acotamiento que usa el preflight TIENE que seguir mirando algo "
+                            "cuando no hay ramas locales: un ámbito vacío nunca aprueba")
+
+    def test_el_control_declarado_lleva_el_acotamiento(self):
+        """Que la constante exista no sirve si el control registrado no la usa."""
+        gl = [c for c in PF._chequeos() if c.nombre == "gitleaks"]     # noqa: SLF001
+        self.assertEqual(1, len(gl), "no hay exactamente un control llamado «gitleaks»")
+        argv = list(gl[0].argv or ())
+        for pieza in PF.ACOTADO_AL_EMPUJON:
+            with self.subTest(pieza=pieza):
+                self.assertIn(pieza, argv,
+                              "el control de secretos no acota su sujeto: volverá a medir el "
+                              "almacén de objetos del clon en vez del repositorio")
 
 
 if __name__ == "__main__":

@@ -364,6 +364,31 @@ class Chequeo:
         self.instalacion = instalacion
 
 
+#: El sujeto del control de secretos: **este repositorio**, no el almacén de objetos del clon.
+#:
+#: `gitleaks detect --source <ruta>` recorre por defecto `--all --full-history`, y `--all`
+#: incluye `refs/remotes/*`. Un clon con un segundo remoto —otro proyecto, un fork, la base de
+#: la que se derivó éste— trae su historia entera a ese almacén, y el control pasa a responder
+#: «hay un secreto en algún objeto de este clon», que no es lo que se publica ni es arreglable
+#: desde aquí. Medido el 2026-10-31 en el clon de trabajo: **20** commits alcanzables desde
+#: `HEAD`, **50** desde las ramas locales, **241** desde todas las refs. El empujón quedó
+#: retenido por un secreto real de otro proyecto, en un commit de importación de mayo. Un
+#: control que quien lo recibe no puede cerrar se acaba saltando, y entonces no protege nada.
+#:
+#: Por qué `HEAD` y además `--branches --tags`
+#: -------------------------------------------
+#: `--branches --tags` solo sería el sujeto correcto —el trabajo propio— y es una trampa:
+#: `actions/checkout` deja un **HEAD desprendido** en los eventos `pull_request`, sin ninguna
+#: rama local. Medido sobre un repositorio con un secreto en su único commit: con
+#: `--branches --tags` gitleaks escanea **0 bytes** y declara «no leaks found»; con `HEAD`
+#: delante encuentra la fuga. Es exactamente el modo de fallo que este proyecto existe para
+#: impedir: **un ámbito vacío nunca aprueba**, y aquí aprobaría en verde y en silencio.
+#:
+#: Lo vigila `tests/unit/test_preflight_criterio.py`, con control positivo (sin acotar, el
+#: secreto ajeno SÍ retiene) y control negativo (un secreto propio SIGUE reteniendo).
+ACOTADO_AL_EMPUJON = ("--log-opts", "HEAD --branches --tags")
+
+
 def _chequeos() -> list:
     py = sys.executable
     return [
@@ -385,7 +410,8 @@ def _chequeos() -> list:
                 herramienta="bandit",
                 instalacion="brew install bandit   # o: pip install bandit==1.9.4"),
         Chequeo("gitleaks", ["gitleaks", "detect", "--no-banner", "--redact",
-                             "--source", str(RAIZ)], herramienta="gitleaks", turno=PERSONA,
+                             "--source", str(RAIZ), *ACOTADO_AL_EMPUJON],
+                herramienta="gitleaks", turno=PERSONA,
                 instalacion="brew install gitleaks",
                 porque="un secreto en el árbol no se arregla borrándolo: se rota"),
         Chequeo("actionlint", ["actionlint"], herramienta="actionlint",

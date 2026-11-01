@@ -10,6 +10,66 @@ histórica no las conservó, se dice.
 
 ---
 
+## 0.8.4 — *sin publicar* · el control de secretos medía el clon, no el repositorio
+
+Medido el **2026-10-31**, macOS 25.4.0, al intentar publicar la rama de 0.8.3. El `pre-push`
+retuvo el empujón con `gitleaks → FAIL: leaks found: 1`. El secreto es **real** y **no es de
+este repositorio**: un JWT en `infra/load/helpers.js`, en un commit de importación inicial de
+mayo, perteneciente a otro proyecto cuyas refs vivían en el mismo clon como segundo remoto.
+
+`gitleaks detect --source <ruta>` recorre por defecto `--all --full-history`, y `--all`
+incluye `refs/remotes/*`. El control decía «un secreto en el árbol» y respondía «un secreto en
+algún objeto de este clon»:
+
+| sujeto | commits alcanzables | fugas |
+|---|---|---|
+| `HEAD` — lo que el empujón publicaría | 20 | **0** |
+| `gitlab/main` | 11 | **0** |
+| ramas locales (`--branches --tags`) | 50 | **0** |
+| todas las refs (`--all`, lo que medía) | 241 | 1, de otro proyecto |
+
+Quien recibía ese rojo no podía cerrarlo desde aquí. Un control que no se puede cerrar se acaba
+saltando —el propio preflight ofrece `HARNESS_SIN_PREFLIGHT=1`, que apaga los quince—, y
+entonces no protege de nada.
+
+**El acotamiento es `HEAD --branches --tags`, y el `HEAD` no es decorativo.** Acotar sólo con
+`--branches --tags` parecía más limpio y es una trampa: `actions/checkout` deja un **HEAD
+desprendido** en los eventos `pull_request`, sin ninguna rama local. Medido sobre un
+repositorio con un secreto en su único commit, en HEAD desprendido:
+
+```
+--log-opts "--branches --tags"        →  scanned ~0 bytes   ·  no leaks found   (rc=0)
+--log-opts "HEAD --branches --tags"   →  scanned ~37 bytes  ·  leaks found: 1   (rc=1)
+```
+
+Una puerta de seguridad verde **porque no mira nada**, justo en el único sitio donde corre
+sobre código de terceros. Es la regla que este proyecto aplica a todo lo demás —un ámbito vacío
+nunca aprueba— y la habría roto el propio arreglo.
+
+Vigilado por cinco pruebas en `tests/unit/test_preflight_criterio.py`, con sus dos controles:
+sin acotar, el secreto ajeno **sí** retiene el empujón (si deja de hacerlo, la prueba del
+acotamiento no mide nada); y un secreto **propio**, alcanzable desde `HEAD`, lo sigue
+reteniendo (acotar el sujeto no puede degenerar en apagar el control).
+
+**No se afirma** que el JWT de ese otro proyecto esté resuelto. Sigue en su historial y se
+arregla rotándolo, que es turno de una persona; lo que cambia es que ya no retiene un empujón
+sobre el que nadie puede actuar.
+
+Además, `tests/adversarial/test_sobre_apply_patch.py` usaba como ejemplo de referencia
+correcta a un secreto dos identificadores que nombran a un proveedor concreto. Lo detectó el
+control `nombres-de-producto` del mismo preflight, antes de publicar: en un repositorio
+público, enumerar de qué servicios hay credenciales es casi tan útil para quien busca como el
+valor, y la selección delata — nombrar uno dice que alguien lo tenía delante. Pasan a
+`MI_SERVICIO_API_KEY`.
+
+Y el control volvió a disparar sobre **este mismo párrafo**, que en su primera versión citaba
+el identificador para explicar que lo quitaba. La excepción razonada —«lo nombro justo para
+decir que lo retiro»— publica exactamente lo mismo. Se corrigió el texto; no se añadió
+`CHANGELOG.md` a `_MARCAS_PERMITIDAS`, que es como un control se desarma: un fichero cada vez,
+siempre con un buen motivo.
+
+---
+
 ## 0.8.3 — *sin publicar* · el sobre de `apply_patch` se leía como órdenes de consola
 
 Medido el **2026-10-31** contra el guardián vivo del espacio `telhar`, a partir de su diario de
