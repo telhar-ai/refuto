@@ -115,6 +115,33 @@ class TestC_CoincidenciaTextualNoConcedePermisos(unittest.TestCase):
 class TestD_TravesiaNoEscapa(unittest.TestCase):
     """D · `..` no saca la escritura del espacio ni cambia la raíz de anclaje."""
 
+    @staticmethod
+    def _regla_esperada(raiz, ruta: str) -> str:
+        """Dónde ATERRIZA la travesía decide qué regla la explica, y eso no lo decide refuto.
+
+        `a/../../../etc/hosts` sube **dos** niveles netos desde la raíz del espacio —el `a/`
+        cancela uno de los tres `..`—. Cuánto hay por encima lo decide dónde el sistema pone
+        sus directorios temporales, no la política:
+
+            Linux   el espacio cuelga de `/tmp/<algo>`; dos niveles llegan a `/`, la escritura
+                    aterriza en `/etc/hosts` y la deniega `/etc/**`, que `external_never` añadió
+                    el 2026-10-31 y que es la regla MÁS específica de las dos.
+            macOS   el mismo `..` se queda dentro de `/private/var/folders/…`, nunca alcanza
+                    `/etc`, y la explica el motivo genérico `fuera-del-espacio`.
+
+        Medido el 2026-11-01: la prueba afirmaba `fuera-del-espacio` para los cuatro vectores,
+        pasaba en macOS y cayó en los **dos** trabajos de Linux de CI (3.10 y 3.13), 1613/1614.
+
+        Se vuelve determinista en lugar de admitir cualquiera de las dos reglas. Una aserción
+        que acepta dos respuestas deja de distinguir «aterrizó donde creo» de «aterrizó en otro
+        sitio», que es justo lo que este vector mide. El cálculo de abajo es un hecho del
+        sistema de archivos —`realpath` y un prefijo—, no una segunda implementación del motor
+        de patrones: si coincidieran por construcción, la prueba sería una tautología.
+        """
+        destino = os.path.realpath(os.path.join(os.path.realpath(str(raiz)), ruta))
+        bajo_etc = any(destino.startswith(p) for p in ("/etc/", "/private/etc/"))
+        return "/etc/**" if bajo_etc else "fuera-del-espacio"
+
     def test_salir_del_espacio(self):
         with Workspace("aut-d") as ws:
             pol = _montar(ws)
@@ -123,7 +150,7 @@ class TestD_TravesiaNoEscapa(unittest.TestCase):
                 with self.subTest(ruta=ruta):
                     d = decide_write(pol, ws.root, ruta)
                     self.assertEqual(DENY, d.outcome)
-                    self.assertEqual("fuera-del-espacio", d.rule)
+                    self.assertEqual(self._regla_esperada(ws.root, ruta), d.rule)
 
     def test_volver_a_entrar_no_desancla(self):
         """`ai/../policies/base.json` resuelve a `policies/base.json` y se trata como tal."""

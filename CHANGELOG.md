@@ -68,6 +68,28 @@ decir que lo retiro»— publica exactamente lo mismo. Se corrigió el texto; no
 `CHANGELOG.md` a `_MARCAS_PERMITIDAS`, que es como un control se desarma: un fichero cada vez,
 siempre con un buen motivo.
 
+### Y lo que encontró CI, que el verde local no podía descartar
+
+`tests/adversarial/test_autoridad_por_raiz.py::TestD_TravesiaNoEscapa` afirmaba la regla
+`fuera-del-espacio` para los cuatro vectores de travesía de `test_salir_del_espacio`. Pasaba en macOS y **cayó en
+los dos trabajos de Linux** (3.10 y 3.13), 1613/1614, con
+`AssertionError: 'fuera-del-espacio' != '/etc/**'`.
+
+El vector `a/../../../etc/hosts` sube **dos** niveles netos —el `a/` cancela uno de los tres
+`..`—, y dónde aterriza eso no lo decide la política: lo decide dónde el sistema pone sus
+directorios temporales. En Linux el espacio cuelga tan arriba que la escritura llega a
+`/etc/hosts`, y desde `external_never` la deniega `/etc/**`, que es la regla más específica.
+En macOS el mismo `..` se queda dentro de `/private/var/folders/…` y nunca alcanza `/etc`.
+
+El veredicto —`DENY`— era idéntico en ambos; lo que cambiaba era cuál de las dos protecciones
+lo explicaba. La expectativa pasa a **derivarse en ejecución** de dónde aterriza de verdad la
+ruta, en vez de admitir cualquiera de las dos reglas: una aserción que acepta dos respuestas
+deja de distinguir «aterrizó donde creo» de «aterrizó en otro sitio», que es exactamente lo
+que este vector mide.
+
+Es el mismo modo de fallo que [`R-04`](docs/decisions/) ya documentó —una propiedad medida en
+un solo sistema de archivos— y la razón de que la matriz de CI no sea decorativa.
+
 ---
 
 ## 0.8.3 — *sin publicar* · el sobre de `apply_patch` se leía como órdenes de consola
