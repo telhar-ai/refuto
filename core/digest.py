@@ -105,7 +105,7 @@ _ASIGNADO = re.compile(
     r"""(?ix)
     \b(api[_-]?key|secret|passwords?|passwd|token)s?
     \s*[=:]\s*
-    (?P<v> "[^"\n]{6,}" | '[^'\n]{6,}' | [^\s"',;]{6,} )
+    (?P<v> (?:std::env::var|env::var|os\.getenv|getenv)\([^\n)]*\)\?? | os\.environ\[[^\n\]]+\] | "[^"\n]{6,}" | '[^'\n]{6,}' | [^\s"',;]{6,} )
     """)
 
 #: Formas que NUNCA son un secreto, lleven comillas o no: remiten a otro sitio, o son un hueco.
@@ -145,7 +145,14 @@ def _es_referencia(valor: str) -> bool:
     v = bruto.strip("\"'").strip()
     if not v:
         return True
-    if _REMISION.search(v):
+    # Quoted values are literals. Only complete, explicit template placeholders
+    # are exempt; substrings such as env or '(' are not evidence of indirection.
+    placeholder = re.fullmatch(r"(?ix)(?:\$\{[A-Z_][A-Z0-9_]*\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[^>]+>|\{\{[^}]+\}\}|\[\[[^]]+\]\]|changeme|change_me|redacted|placeholder|example|dummy|sample|none|null|nil|true|false|undefined|todo|fixme|x{3,}|\*{3,}|\.{3,}|-{3,})", v)
+    if placeholder:
+        return True
+    if not entrecomillado and re.fullmatch(
+            r"(?:process\.env\.[A-Za-z_][A-Za-z0-9_]*|os\.environ\[[^\]]+\]|"
+            r"(?:std::env::var|env::var|os\.getenv|getenv)\((?:\"[A-Za-z_][A-Za-z0-9_]*\"|'[A-Za-z_][A-Za-z0-9_]*'|[A-Za-z_][A-Za-z0-9_]*)\)\??)", v):
         return True
     return not entrecomillado and bool(_NOMBRE.search(v))
 
@@ -161,7 +168,12 @@ def classify(text: str) -> tuple[list[str], list[str]]:
                if label in CIERTAS and pat.search(text)]
     indicios: list[str] = []
     for m in _ASIGNADO.finditer(text):
-        if not _es_referencia(m.group("v")):
+        reference = _es_referencia(m.group("v"))
+        tail = text[m.end():].strip()
+        # A reference prefix cannot hide a literal fallback or concatenation.
+        if reference and tail and not re.fullmatch(r"[;,}\s]*(?:(?://|#).*)?", tail):
+            reference = False
+        if not reference:
             indicios.append(f"{m.group(1).lower()} con valor literal")
             break
     return pruebas, indicios

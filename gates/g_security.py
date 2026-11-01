@@ -21,7 +21,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from core.digest import redact
+from core.digest import classify, _PATTERNS
 from core.model import (BLOCKED, CRITICAL, Evidence, FAIL, Finding, HIGH, NOT_EXECUTABLE,
                         PASS, Result, Scope)
 from core.proc import TEXT_IO
@@ -49,6 +49,10 @@ def run(ctx) -> Result:
     # 1 · Secretos. Siempre corre: no depende de nada instalado.
     scanned, ilegibles, hits = _scan_secrets(ctx.workspace)
     for rel, line_no, labels in hits:
+        if labels == ["REVIEW_REQUIRED"]:
+            blocked = True
+            observations.append(f"{rel}:{line_no}: literal sospechoso sin confirmación; requiere revisión.")
+            continue
         findings.append(Finding(rel, f"posible secreto ({', '.join(labels)}). "
                                      f"Lo que entra al árbol, sale: el control es que el dato "
                                      f"no esté, no que no se mande.", line_no))
@@ -56,7 +60,7 @@ def run(ctx) -> Result:
                              excerpt=f"{scanned} archivos recorridos · {len(hits)} hallazgos"))
 
     if shutil.which("gitleaks"):
-        out = _run_json(["gitleaks", "detect", "--no-banner", "--report-format", "json",
+        out = _run_json(["gitleaks", "detect", "--no-git", "--no-banner", "--report-format", "json",
                          "--report-path", "-", "-s", str(ctx.workspace)])
         if out["ok"]:
             n = len(out["data"] or [])
@@ -187,20 +191,29 @@ def _scan_secrets(root: Path) -> tuple[int, int, list]:
                 continue
             try:
                 if p.stat().st_size > MAX_BYTES:
+                    ilegibles += 1  # Coverage unknown: skipped does not mean clean.
                     continue
-                text = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
+                text = p.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
                 ilegibles += 1
                 continue
             scanned += 1
             for n, line in enumerate(text.splitlines(), 1):
-                _, labels = redact(line)
+                labels, indications = classify(line)
                 if labels:
                     hits.append((str(p.relative_to(root)), n, labels))
+                elif indications:
+                    hits.append((str(p.relative_to(root)), n, ["REVIEW_REQUIRED"]))
+            # A private-key pattern spans lines. Preserve its source line, not its value.
+            key_pattern = next(pattern for label, pattern in _PATTERNS if label == "PRIVKEY")
+            for match in key_pattern.finditer(text):
+                if "\n" not in match.group():
+                    continue
+                hits.append((str(p.relative_to(root)), text.count("\n", 0, match.start()) + 1, ["PRIVKEY"]))
     return scanned, ilegibles, hits
 
 
-def _run_json(argv: list, timeout: int = 300) -> dict:
+def _run_json(argv: list, timeout: int = 300, kind: str | None = None) -> dict:
     try:
         p = subprocess.run(argv, capture_output=True, **TEXT_IO, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -214,6 +227,45 @@ def _run_json(argv: list, timeout: int = 300) -> dict:
                          f"no produjo salida (código {p.returncode}): no se puede afirmar "
                          f"que no encontrara nada"}
     try:
-        return {"ok": True, "data": json.loads(p.stdout), "error": ""}
+        data = json.loads(p.stdout)
+        tool = kind or Path(argv[0]).name
+        valid = _valid_tool_report(tool, data)
+        success = p.returncode == 0 or (tool == "gitleaks" and p.returncode == 1 and isinstance(data, list) and bool(data))
+        if not success or not valid:
+            return {"ok": False, "data": None, "error": f"{tool}: exit={p.returncode}; report schema valid={valid}", "returncode": p.returncode}
+        return {"ok": True, "data": data, "error": "", "returncode": p.returncode}
     except json.JSONDecodeError as exc:
         return {"ok": False, "data": None, "error": f"salida no era JSON: {exc}"}
+
+
+def _valid_tool_report(tool: str, data) -> bool:
+    """A process exit and JSON syntax are necessary, not sufficient evidence."""
+    if tool == "gitleaks":
+        return isinstance(data, list) and all(isinstance(h, dict)
+            and isinstance(h.get("File"), str) and bool(h["File"])
+            and isinstance(h.get("RuleID"), str) and bool(h["RuleID"])
+            and type(h.get("StartLine")) is int and h["StartLine"] > 0 for h in data)
+    if not isinstance(data, dict) or any(k in data for k in ("error", "errors")) or data.get("success") is False:
+        return False
+    def string(value):
+        return isinstance(value, str) and bool(value.strip())
+    if tool == "syft":
+        schema = data.get("schema")
+        return (isinstance(schema, dict) and string(schema.get("version"))
+            and schema["version"].split(".")[0] == "16"
+            and isinstance(data.get("descriptor"), dict) and data["descriptor"].get("name") == "syft"
+            and string(data["descriptor"].get("version"))
+            and isinstance(data.get("source"), dict) and string(data["source"].get("type"))
+            and isinstance(data.get("artifacts"), list)
+            and all(isinstance(a, dict) and all(string(a.get(k)) for k in ("id", "name", "type"))
+                    and isinstance(a.get("version"), str) for a in data["artifacts"]))
+    if tool == "trivy":
+        return (type(data.get("SchemaVersion")) is int and data["SchemaVersion"] == 2
+            and string(data.get("ArtifactName")) and string(data.get("ArtifactType"))
+            and isinstance(data.get("Results"), list)
+            and all(isinstance(r, dict) and string(r.get("Target"))
+                and isinstance(r.get("Vulnerabilities", []), (list, type(None)))
+                and all(isinstance(v, dict) and all(string(v.get(k)) for k in ("VulnerabilityID", "PkgName", "Severity"))
+                    and v["Severity"] in {"UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
+                    for v in (r.get("Vulnerabilities") or [])) for r in data["Results"]))
+    return False
