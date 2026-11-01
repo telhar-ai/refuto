@@ -22,13 +22,14 @@ resultado era idéntico.
 from __future__ import annotations
 
 import subprocess
+import io
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from core.proc import TEXT_IO
-from tests.runner import veredicto
+from tests.runner import AccountingResult, veredicto
 
 RAIZ = Path(__file__).resolve().parents[2]
 
@@ -120,6 +121,70 @@ class TestDePuntaAPunta(unittest.TestCase):
             self.assertIn("ACUERDO=True", salida, salida)
             self.assertEqual(1, p.returncode,
                              "el corredor salió con 0 teniendo un fallo esperado que pasó")
+
+
+class TestCategoriasDisjuntas(unittest.TestCase):
+    def ejecutar(self, clase):
+        return unittest.TextTestRunner(stream=io.StringIO(), resultclass=AccountingResult).run(
+            unittest.defaultTestLoader.loadTestsFromTestCase(clase))
+
+    def test_seis_casos_separan_exitos_omisiones_y_fallos(self):
+        class Casos(unittest.TestCase):
+            def test_pass(self): pass
+            def test_fail(self): self.fail("fixture")
+            def test_error(self): raise ValueError("fixture")
+            @unittest.skip("fixture")
+            def test_skip(self): pass
+            @unittest.expectedFailure
+            def test_xfail(self): self.fail("fixture")
+            @unittest.expectedFailure
+            def test_xpass(self): pass
+        r = self.ejecutar(Casos)
+        self.assertEqual(6, r.testsRun)
+        self.assertEqual({"PASS": 1, "FAIL": 1, "ERROR": 1, "SKIP": 1,
+                          "XFAIL": 1, "XPASS": 1, "UNKNOWN": 0}, dict(r.case_counts))
+        self.assertEqual(r.testsRun, sum(r.case_counts.values()))
+        self.assertFalse(r.wasSuccessful())
+
+    def test_varios_subtests_fallidos_no_son_varios_casos(self):
+        class Casos(unittest.TestCase):
+            def test_subtests(self):
+                for i in range(3):
+                    with self.subTest(i=i): self.fail("fixture")
+        r = self.ejecutar(Casos)
+        self.assertEqual(3, len(r.failures))
+        self.assertEqual(1, r.testsRun)
+        self.assertEqual(1, r.case_counts["FAIL"])
+        self.assertEqual(0, r.case_counts["PASS"])
+
+    def test_error_y_skip_en_subtests_no_desaparecen_tras_un_exito(self):
+        class Casos(unittest.TestCase):
+            def test_subtests(self):
+                with self.subTest(i=1): self.skipTest("fixture")
+                with self.subTest(i=2): raise ValueError("fixture")
+                with self.subTest(i=3): self.assertTrue(True)
+        r = self.ejecutar(Casos)
+        self.assertEqual(1, r.case_counts["ERROR"])
+        self.assertEqual(1, sum(r.case_counts.values()))
+
+    def test_subtest_omitido_no_es_un_caso_completamente_aprobado(self):
+        class Casos(unittest.TestCase):
+            def test_subtests(self):
+                with self.subTest(i=1): self.skipTest("fixture")
+                with self.subTest(i=2): self.assertTrue(True)
+        r = self.ejecutar(Casos)
+        self.assertEqual(1, r.case_counts["SKIP"])
+        self.assertEqual(0, r.case_counts["PASS"])
+
+    def test_error_de_clase_no_inventa_un_caso_iniciado(self):
+        class Casos(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls): raise ValueError("fixture")
+            def test_not_started(self): pass
+        r = self.ejecutar(Casos)
+        self.assertEqual(0, r.testsRun)
+        self.assertEqual(0, sum(r.case_counts.values()))
+        self.assertEqual(1, r.fixture_incidents["ERROR"])
 
 
 if __name__ == "__main__":

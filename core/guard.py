@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """El guardián. Un solo programa; todos los ganchos de todos los runtimes lo invocan.
 
-    python3 -m core.guard --runtime {kiro|claude|gemini|opencode|antigravity} --stdin
+    python3 -m core.guard --runtime {kiro|claude|codex|gemini|opencode|antigravity} --stdin
 
 Lee por la entrada estándar la carga del gancho —que tiene forma distinta en cada runtime—, la
 normaliza, aplica la política canónica y responde en el dialecto que ese runtime entiende.
@@ -12,19 +12,21 @@ Porque la alternativa comprobada fue tener la regla escrita en dos vocabularios 
 uno (H-03). Traducir la CARGA es un problema de veinte líneas por runtime; traducir la REGLA es
 un problema que diverge. Se traduce la carga.
 
-Cómo responde cada runtime, verificado en su documentación instalada:
+Cómo responde cada runtime:
 
     claude    JSON en stdout con `hookSpecificOutput.permissionDecision` ∈ {allow, deny, ask}
               y salida 0. Salida 2 también bloquea, con stderr al modelo.
+    codex     MISMA carga de entrada que Claude y respuesta DISTINTA: declara el enum entero
+              e implementa `deny` solo. Aprobar es callarse. Ver `core/dialect.py`.
     kiro      salida ≠ 0 bloquea; stderr explica.
     gemini    salida ≠ 0 bloquea; stderr explica.
     antigravity  JSON en stdout `{"decision": allow|deny|ask, "reason"}`, salida 0 siempre
               (el código de salida no está documentado: ver core/antigravity.py).
-    otros     salida ≠ 0 bloquea.
 
-Cuando el dialecto exacto de un runtime NO consta verificado, se usa el mecanismo universal
-—salida distinta de cero— y se registra en el evento que la respuesta fue genérica. Nunca se
-inventa un campo.
+Este módulo NO serializa: decide. La traducción de la decisión al protocolo de cada runtime
+vive en `core/dialect.py`, y está separada porque mezclarlas costó un fallo abierto — la
+traducción de Codex corría antes que la escalada por auditoría interrumpida, y `ask` en
+Codex ejecuta. Un runtime sin dialecto declarado se bloquea; no se aproxima al más parecido.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ import sys
 import time
 from pathlib import Path
 
+from core import dialect
 from core.policy import (ALLOW, ASK, DENY, Decision, PoliticaIlegible, Policy,
                          decide_command, decide_write)
 from core.proc import euid, force_utf8_io
@@ -69,9 +72,17 @@ _ESCRITURA = {
 
 _SHAPES = {
     # `codex` — medido el 2026-10-30 contra Codex 0.166.0. Su carga de `PreToolUse` es
-    # ISOMORFA a la de Claude Code (mismas claves, mismo anidamiento) y entiende la misma
-    # respuesta `hookSpecificOutput`. Lo único propio es `apply_patch`: ver `_ESCRITURA` y
-    # `_rutas_apply_patch`.
+    # ISOMORFA a la de Claude Code (mismas claves, mismo anidamiento). Lo único propio de la
+    # ENTRADA es `apply_patch`: ver `_ESCRITURA` y `_rutas_apply_patch`.
+    #
+    # La SALIDA no es isomorfa, y esta tabla no la decide. Hasta el 2026-10-31 aquí ponía
+    # «y entiende la misma respuesta `hookSpecificOutput`»: era falso y costó un fallo
+    # abierto. Codex declara el enum entero e implementa `deny` solo; `allow` y `ask` son
+    # «Hook Failed» y la herramienta se ejecuta igual. La tabla medida con efecto observable
+    # y la traducción viven en `core/dialect.py`, que es el único sitio que serializa.
+    #
+    # `structured` describe la ENTRADA —si el runtime lee una respuesta en stdout— y ya no
+    # elige la forma de la salida: eso lo hace el dialecto.
     "codex": {
         "tool": ("tool_name",),
         "path": ("tool_input.file_path", "tool_input.path", "tool_input.notebook_path"),
@@ -230,6 +241,24 @@ def _rutas_apply_patch(texto: str) -> list:
     return rutas
 
 
+def _native_identity(runtime: str, payload: dict) -> dict:
+    """Reported hook identity, not authenticated provenance or logical retry identity.
+
+    Only the documented Claude/Codex top-level fields are mapped. No ID is minted
+    from input content, wall time or the last observed operation. Other dialects
+    remain uninstrumented until their native contract is verified.
+    """
+    values = {"session_id": None, "tool_call_id": None}
+    if runtime in ("claude", "codex"):
+        for field, native in (("session_id", "session_id"), ("tool_call_id", "tool_use_id")):
+            value = payload.get(native)
+            if isinstance(value, str) and value.strip() and len(value) <= 512:
+                values[field] = value
+    values["identity_status"] = ("reported" if all(values.values()) else
+                                  "incomplete" if any(values.values()) else "unavailable")
+    return values
+
+
 def normalize(runtime: str, payload: dict) -> dict:
     """Carga del gancho → hecho canónico. Sin esto, cada runtime traería su propia política.
 
@@ -258,6 +287,7 @@ def normalize(runtime: str, payload: dict) -> dict:
     campos = {n: _campo(payload, shape[n])
               for n in ("tool", "path", "content", "command", "cwd")}
     return {
+        **_native_identity(runtime, payload),
         "runtime": runtime,
         # `payload` sin una sola clave significa que el gancho no entregó carga: modo directo
         # (`--path`), invocación de prueba, o un runtime que no manda cuerpo. No es lo mismo que
@@ -466,8 +496,10 @@ def _digest_de(policy) -> str:
 
 
 def digest_entrada(fact: dict) -> str:
-    """Identifica la OPERACIÓN, no el evento: los mismos 16 hex en la decisión previa y en el
-    resultado posterior, que es lo que permite casarlos.
+    """Digest de la entrada, NO identidad de una invocación.
+
+    Dos llamadas distintas pueden producir los mismos 16 hex. Los lectores deben
+    preferir identidades nativas y declarar por separado la correlación por entrada.
 
     Se calcula sobre el hecho ya normalizado —herramienta, ruta, orden, contenido— y no sobre la
     carga cruda del gancho, porque `PreToolUse` y `PostToolUse` no traen la misma envoltura pero
@@ -480,7 +512,8 @@ def digest_entrada(fact: dict) -> str:
 
 
 def _emit_event(workspace: Path, fact: dict, decision, kind: str,
-                digest: str = "", duration_ms: float | None = None) -> str:
+                digest: str = "", duration_ms: float | None = None,
+                respuesta=None) -> str:
     """Toda decisión del guardián deja rastro. Un control sin rastro no se puede auditar.
 
     Si no se puede escribir el evento, el guardián NO se cae —bloquear una escritura legítima
@@ -518,6 +551,9 @@ def _emit_event(workspace: Path, fact: dict, decision, kind: str,
             # dato, no una ausencia: medido el 2026-10-04, las 37 136 decisiones del diario de
             # telhar no llevaban ninguna, asi que ningun analisis podia ir por sesion.
             "run_id": os.environ.get("HARNESS_RUN_ID", ""),
+            "session_id": fact.get("session_id"),
+            "tool_call_id": fact.get("tool_call_id"),
+            "identity_status": fact.get("identity_status", "unavailable"),
             # QUÉ política decidió esto. Sin el digest, un evento dice qué regla denegó pero
             # no de qué política efectiva salió — y con herencia esa pregunta pasa de ociosa a
             # central: la regla pudo venir del cliente, y el cliente pudo cambiar después.
@@ -554,6 +590,28 @@ def _emit_event(workspace: Path, fact: dict, decision, kind: str,
             "duration_ms": (round(duration_ms, 2) if duration_ms is not None else None),
             # QUÉ OPERACIÓN es, para poder casar esta decisión con su resultado posterior.
             "entrada_digest": digest_entrada(fact),
+            # QUÉ SE DIJO, que no es lo mismo que qué se decidió. Hasta el 2026-10-31 el
+            # diario sólo traía `outcome`, así que «decidí permitir» y «dije que permitía»
+            # eran la misma casilla — y el defecto de Codex vivía justo en la diferencia:
+            # se decidía `ask` y se emitía algo que ese runtime ejecuta. Con las dos
+            # columnas, una auditoría puede preguntar si alguna decisión se dijo mal sin
+            # tener que reproducir la corrida.
+            #
+            # `wire` vacío significa SILENCIO, que en Codex es la aprobación y en los
+            # dialectos planos acompaña al código de salida. `null` significa «no se
+            # determinó aquí» (el camino de Antigravity agrega varias decisiones en una
+            # respuesta, así que por hecho no hay una sola).
+            #
+            # Se calcula ANTES de registrar, y eso lo hace exacto en vez de aproximado: si
+            # el registro falla no se escribe ninguna línea, luego toda línea que EXISTE es
+            # de una decisión cuyo aviso de auditoría estaba vacío — que es exactamente la
+            # respuesta que `respuesta` trae.
+            "wire": (None if respuesta is None else respuesta.wire),
+            "wire_exit_code": (None if respuesta is None else respuesta.exit_code),
+            # Por qué la decisión semántica no se pudo representar tal cual, si es el caso.
+            # Un `ask` que viaja como `deny` porque el runtime no implementa `ask` no es un
+            # `deny` de la política, y confundirlos falsearía cualquier recuento de bloqueos.
+            "wire_degradada": (None if respuesta is None else respuesta.degradada),
         })
     except Exception as exc:                                            # noqa: BLE001
         aviso = (f"AUDITORÍA INTERRUMPIDA: esta decisión no se pudo registrar en "
@@ -647,8 +705,9 @@ def _main_post(opts, raw: str) -> int:
 
     El diario sabía qué se permitió y no si funcionó: un `allow` y una orden rota eran
     indistinguibles, y sin dos marcas de tiempo tampoco había forma de saber cuánto tardó nada.
-    Este evento aporta las dos cosas — `entrada_digest` lo casa con su decisión, y la diferencia
-    entre los dos `ts` ES la duración real de la herramienta.
+    Conserva la identidad nativa cuando existe. El digest identifica contenido, no
+    una llamada: el lector declara por separado identidad reportada y correlación
+    por entrada. Ninguna de las dos demuestra por sí sola el efecto externo.
 
     Un fallo aquí nunca puede costarle el trabajo a nadie: esto corre DESPUÉS de que la
     herramienta haya actuado, así que bloquear no desharía nada y sí rompería la sesión.
@@ -670,6 +729,10 @@ def _main_post(opts, raw: str) -> int:
             "kind": KIND_RESULTADO,
             "runtime": fact["runtime"],
             "tool": fact["tool"],
+            "run_id": os.environ.get("HARNESS_RUN_ID", ""),
+            "session_id": fact.get("session_id"),
+            "tool_call_id": fact.get("tool_call_id"),
+            "identity_status": fact.get("identity_status", "unavailable"),
             "entrada_digest": digest_entrada(fact),
             "ok": res["ok"],
             "exit_code": res["exit_code"],
@@ -760,18 +823,23 @@ def main(argv: list | None = None) -> int:
     if policy is None:
         _emit_event(workspace, fact, decision, "policy/illegible",
                     duration_ms=(time.monotonic() - t0) * 1000)
-        if fact["structured_reply"]:
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": decision.reason}}, ensure_ascii=False))
-            return 0
-        print(decision.reason, file=sys.stderr)
-        return 2
+        # Mismo traductor que el camino normal. Antes este bloque serializaba el sobre a
+        # mano, así que una corrección del dialecto arreglaba una rama y dejaba la otra:
+        # dos sitios que dicen lo mismo acaban diciendo cosas distintas.
+        respuesta = dialect.responder(fact["runtime"], decision.outcome, decision.reason)
+        if respuesta.stderr:
+            print(respuesta.stderr, file=sys.stderr)
+        if respuesta.stdout:
+            print(respuesta.stdout)
+        return respuesta.exit_code
 
     decision, kind = evaluate(policy, workspace, fact)
+    # La respuesta que se emitirá SI el registro sale bien. Se calcula antes para que el
+    # diario pueda guardar qué se dijo, no sólo qué se decidió; si el registro falla no se
+    # escribe línea alguna, así que toda línea del diario corresponde a esta respuesta.
+    prevista = dialect.responder(fact["runtime"], decision.outcome, decision.reason)
     aviso = _emit_event(workspace, fact, decision, kind, _digest_de(policy),
-                        duration_ms=(time.monotonic() - t0) * 1000)
+                        duration_ms=(time.monotonic() - t0) * 1000, respuesta=prevista)
 
     # Si esto corre como root bajo sudo, se devuelve `.harness/` a quien invocó. Sin ello, una
     # sola sesión con sudo deja a la persona sin poder escribir su propio rastro.
@@ -781,52 +849,20 @@ def main(argv: list | None = None) -> int:
     except Exception:                                                   # noqa: BLE001
         pass
 
-    if fact["structured_reply"]:
-        mapping = {ALLOW: "allow", DENY: "deny", ASK: "ask"}
-        motivo = decision.reason or "política de refuto"
-        nombre = mapping[decision.outcome]
-        if nombre == "ask" and fact["runtime"] == "codex":
-            nombre = "deny"
-            motivo = (f"{motivo}\n\n(Esto requiere la decisión de una persona. Codex no "
-                      f"implementa esa respuesta —la trata como fallo del gancho y ejecuta "
-                      f"igual—, así que aquí se traduce a un bloqueo: ejecútela usted.)")
-        if aviso:
-            motivo = f"{motivo}\n\n⚠ {aviso}"
-            # Un fallo de auditoría no es «todo bien». Con respuesta estructurada el aviso
-            # viajaba en el texto y la decisión seguía siendo `allow`, así que la escritura
-            # ocurría igual: el rastro se cortaba y nadie lo echaba en falta — que es lo que
-            # `_emit_event` dice existir para impedir.
-            #
-            # Medido el 2026-09-25 con el diario inescribible y una escritura que aprobaría:
-            #
-            #     claude                     allow   ← la escritura ocurre
-            #     kiro · gemini · opencode   exit 2  ← bloquea
-            #     antigravity                ask
-            #
-            # Tres respuestas al mismo hecho, y la permisiva era la del runtime principal.
-            # `_main_antigravity` ya hacía esto; aquí faltaba. Se iguala al más prudente de los
-            # dos dialectos estructurados: `ask`, no `deny` — el trabajo no se pierde, lo
-            # decide una persona.
-            if nombre == "allow":
-                nombre = "ask"
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": nombre,
-                "permissionDecisionReason": motivo,
-            }
-        }, ensure_ascii=False))
-        return 0
-
-    if decision.outcome == DENY:
-        print(f"harness-guard: BLOQUEADO — {decision.reason}", file=sys.stderr)
-        return 2
-    if decision.outcome == ASK:
-        print(f"harness-guard: REQUIERE APROBACIÓN — {decision.reason}", file=sys.stderr)
-        return 2
-    # Éxito silencioso: un guardián que habla cuando todo va bien se aprende a ignorar.
-    # La excepción es el fallo de auditoría, que no es «todo bien».
-    return 2 if aviso else 0
+    # Decidir y decirlo son dos responsabilidades, y mezclarlas ya costó un fallo abierto:
+    # la traducción del dialecto de Codex corría ANTES que la escalada por auditoría
+    # interrumpida, así que `allow` con el diario roto acababa en `ask` — que en Codex
+    # ejecuta. `core.dialect` recibe la decisión semántica y el aviso JUNTOS y decide el
+    # orden una sola vez, para todos los runtimes.
+    respuesta = dialect.responder(fact["runtime"], decision.outcome,
+                                  decision.reason, aviso)
+    if respuesta.stderr:
+        print(respuesta.stderr, file=sys.stderr)
+    if respuesta.stdout:
+        print(respuesta.stdout)
+    # Éxito silencioso: un guardián que habla cuando todo va bien se aprende a ignorar. En
+    # Codex, además, es la ÚNICA forma de aprobar que su protocolo entiende.
+    return respuesta.exit_code
 
 
 _ORDEN_DECISION = {ALLOW: 0, ASK: 1, DENY: 2}

@@ -41,7 +41,12 @@ from core.proc import TEXT_IO
 RAIZ = Path(__file__).resolve().parents[2]
 
 #: Cómo se lee la respuesta de cada dialecto, y qué cuenta como «deja pasar».
-DIALECTOS = ("claude", "kiro", "gemini", "opencode", "antigravity")
+#:
+#: `codex` se añadió el 2026-10-31, y su ausencia hasta entonces es la razón por la que el
+#: defecto sobrevivió: esta lista es el sujeto de «ningún runtime aprueba lo que no pudo
+#: registrar», y el runtime que sí lo aprobaba no estaba en ella. Un barrido que no enumera
+#: a todos no mide la propiedad que dice medir — mide los que alguien se acordó de poner.
+DIALECTOS = ("claude", "codex", "kiro", "gemini", "opencode", "antigravity")
 
 
 def _carga(runtime: str, ws: Path) -> dict:
@@ -112,11 +117,28 @@ class TestNingunDialectoDejaPasarSinRegistrar(_ConDiarioRoto):
                 self.assertIn("AUDITORÍA INTERRUMPIDA", motivo)
 
     def test_los_dialectos_estructurados_preguntan_en_vez_de_rechazar(self):
-        """El trabajo no se pierde: lo decide quien puede arreglar el diario."""
+        """El trabajo no se pierde: lo decide quien puede arreglar el diario.
+
+        Codex queda fuera a propósito, y no por descuido: ahí `ask` **no pregunta**. Se midió
+        el 2026-10-31 contra 0.166.0 que `permissionDecision:ask` es «Hook Failed» y la
+        herramienta se ejecuta igual, así que preguntar sería aprobar. Ver
+        `test_en_codex_preguntar_seria_aprobar`.
+        """
         for runtime in ("claude", "antigravity"):
             with self.subTest(runtime=runtime):
                 _, decision, _ = _decidir(runtime, self.ws)
                 self.assertEqual("ask", decision)
+
+    def test_en_codex_preguntar_seria_aprobar(self):
+        """El único dialecto donde la escalada tiene que ser `deny`, y por qué.
+
+        Hasta el 2026-10-31 esta escalada corría DESPUÉS de la traducción del dialecto, así
+        que Codex recibía `ask` —«Hook Failed»— y la escritura ocurría sin rastro. Lo que
+        falla aquí si alguien lo deshace no es un matiz de vocabulario: es el control entero.
+        """
+        _, decision, motivo = _decidir("codex", self.ws)
+        self.assertEqual("deny", decision)
+        self.assertIn("AUDITORÍA INTERRUMPIDA", motivo)
 
 
 class TestConElDiarioSanoNoCambiaNada(unittest.TestCase):

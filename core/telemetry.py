@@ -29,6 +29,7 @@ Lo que esto NO mide
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta
@@ -95,6 +96,8 @@ def leer(rutas, *, desde: datetime | None = None) -> dict:
     fuentes: list = []
     for p in rutas:
         n0 = len(eventos)
+        source_id = hashlib.sha256(os.fsencode(Path(p).resolve())).hexdigest()
+        espacio = _espacio_de(Path(p))
         try:
             fh = Path(p).open(encoding="utf-8", errors="replace")
         except OSError:
@@ -115,7 +118,10 @@ def leer(rutas, *, desde: datetime | None = None) -> dict:
                     continue
                 if desde is not None and _ts(e) is not None and _ts(e) < desde:
                     continue
-                e["_espacio"] = _espacio_de(Path(p))
+                e["_espacio"] = espacio
+                # Display basenames are not identities: two roots can share a name.
+                # Overwrite any producer-supplied value with the observed source identity.
+                e["_source_id"] = source_id
                 eventos.append(e)
         fuentes.append({"path": str(p), "eventos": len(eventos) - n0})
     return {"eventos": eventos, "leidos": leidos, "ilegibles": ilegibles, "fuentes": fuentes}
@@ -173,31 +179,65 @@ def resumen(eventos: list) -> dict:
     guardian.update(de=len(decisiones),
                     cobertura=round(100 * len(medidas) / len(decisiones), 1) if decisiones else None)
 
-    # Duración REAL de cada herramienta: la distancia entre la decisión y su resultado. Se casan
-    # por `entrada_digest`, no por cercanía en el tiempo; con varias herramientas en vuelo, la
-    # cercanía empareja las de otro.
+    # Intervalo decisión/resultado correlacionado por entrada. No prueba por sí solo
+    # identidad de invocación ni efecto: sólo se mide cuando la clave es unívoca.
+    # El digest identifica una ENTRADA, no una invocación. Dos llamadas idénticas
+    # pueden solaparse. Sin call_id no hay forma de decidir cuál terminó: se declara
+    # ambiguo en vez de fabricar causalidad eligiendo la decisión más reciente.
+    def clave(e):
+        source = e.get("_source_id") or e.get("_espacio")
+        session, call = e.get("session_id"), e.get("tool_call_id")
+        if session or call:
+            if not all(isinstance(x, str) and x.strip() for x in (session, call)):
+                return None
+            return ("native", source, e.get("runtime"), session, call)
+        digest = e.get("entrada_digest")
+        if not isinstance(digest, str) or not digest:
+            return None
+        return ("input", source, e.get("runtime"), e.get("run_id"),
+                e.get("tool"), digest)
+
     por_digest: dict = {}
     for e in decisiones:
-        d = e.get("entrada_digest")
-        if d and _ts(e) is not None:
-            por_digest.setdefault(d, []).append(e)
+        k = clave(e)
+        if k is not None:
+            por_digest.setdefault(k, []).append(e)
+    repeticiones = collections.Counter(k for r in resultados if (k := clave(r)) is not None)
     duraciones: list = []
     por_herramienta: dict = collections.defaultdict(list)
     emparejados = 0
+    ambiguos = 0
+    por_identidad = por_entrada = conflictos = 0
     for r in resultados:
-        d, tr = r.get("entrada_digest"), _ts(r)
-        if not d or tr is None or d not in por_digest:
+        tr = _ts(r)
+        k = clave(r)
+        if tr is None or k is None or k not in por_digest:
             continue
-        previas = [x for x in por_digest[d] if _ts(x) <= tr]
+        if len(por_digest[k]) != 1 or repeticiones[k] != 1:
+            ambiguos += 1
+            continue
+        decision = por_digest[k][0]
+        if k[0] == "native" and (decision.get("tool") != r.get("tool") or
+                                 decision.get("entrada_digest") != r.get("entrada_digest")):
+            conflictos += 1
+            continue
+        previas = [x for x in por_digest[k] if _ts(x) is not None and _ts(x) <= tr
+                   and x.get("outcome") == "allow"]
         if not previas:
             continue
         emparejados += 1
+        por_identidad += k[0] == "native"
+        por_entrada += k[0] == "input"
         seg = (tr - _ts(max(previas, key=lambda x: _ts(x)))).total_seconds()
         if seg >= 0:
             duraciones.append(seg)
             por_herramienta[r.get("tool") or "?"].append(seg)
     herramientas = _stats(duraciones)
     herramientas.update(resultados=len(resultados), emparejados=emparejados,
+                        ambiguos=ambiguos,
+                        emparejados_por_identidad=por_identidad,
+                        emparejados_por_entrada=por_entrada,
+                        conflictos_identidad=conflictos,
                         sin_pareja=len(resultados) - emparejados,
                         decisiones_sin_resultado=max(0, len(decisiones) - emparejados))
 
@@ -223,6 +263,7 @@ def resumen(eventos: list) -> dict:
         "desenlace": dict(desenlace),
         "reglas": [{"outcome": o, "rule": r, "n": n} for (o, r), n in reglas.most_common(12)],
         "por_espacio": dict(collections.Counter(e.get("_espacio") or "?" for e in eventos).most_common()),
+        "por_fuente": dict(collections.Counter(e.get("_source_id") or "?" for e in eventos).most_common()),
         "por_runtime": dict(collections.Counter(e.get("runtime") for e in decisiones if e.get("runtime")).most_common()),
         "por_herramienta": dict(collections.Counter(e.get("tool") for e in decisiones if e.get("tool")).most_common(8)),
         "lentas": sorted(({"tool": t, **_stats(v)} for t, v in por_herramienta.items()),

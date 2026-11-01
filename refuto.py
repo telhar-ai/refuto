@@ -2105,7 +2105,7 @@ def cmd_docs(opts) -> int:
 # ── selftest ─────────────────────────────────────────────────────────────────────────
 def cmd_selftest(opts) -> int:
     from tests.runner import run_suites
-    return run_suites(only=opts.suite, verbose=opts.verbose)
+    return run_suites(only=opts.suite, verbose=opts.verbose, report_file=opts.report)
 
 
 # ── chat ────────────────────────────────────────────────────────────────────────────
@@ -2898,6 +2898,7 @@ def build_parser() -> argparse.ArgumentParser:
     st.set_defaults(func=cmd_status)
 
     s = sub.add_parser("selftest", help="el juez se prueba a sí mismo")
+    s.add_argument("--report", type=Path, help="informe JSON local fuera del repositorio público")
     s.add_argument("--suite", action="append", default=[])
     s.set_defaults(func=cmd_selftest)
     return p

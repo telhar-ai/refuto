@@ -45,8 +45,8 @@ respuesta «todo bien» no vigila: presiona.
 
 Ahora se separan las dos cosas, porque no son de la misma clase:
 
-- el **denominador** es una propiedad del ÁRBOL. Se mide aquí y se compara.
-- el **numerador** es el resultado de una CORRIDA. No se puede medir sin ejecutar la suite, y
+- el **censo y su reparto** son propiedades del ÁRBOL. Se miden aquí y se comparan.
+- tanto el **numerador como el denominador históricos** pertenecen a una CORRIDA. No se pueden medir sin ejecutar la suite, y
   ejecutarla dentro de un control de segundos lo convertiría en un control que nadie corre. No
   se comprueba, y por eso se dice: lo verifica la corrida de CI, no este guion.
 
@@ -97,8 +97,9 @@ def _controles_del_preflight() -> int:
 #: un número de línea convertiría cualquier edición del README en un fallo de este control, que
 #: es como se enseña a ignorarlo.
 COMPROBACIONES = (
-    # El DENOMINADOR: cuántas pruebas hay. Propiedad del árbol, medible aquí.
-    ("total de la suite", r"selftest`\s*→\s*\*\*\d+/(\d+)",
+    # El censo pertenece al árbol; el denominador de una corrida histórica, no.
+    # Compararlos obligaba a inventar una ejecución cada vez que se añadía una prueba.
+    ("total de la suite", r"adversarial \d+ = \*\*(\d+)\*\*",
      lambda: sum(_pruebas_por_suite().values())),
     ("reparto: unit", r"\bunit (\d+) ·", lambda: _pruebas_por_suite()["unit"]),
     ("reparto: contract", r"· contract (\d+) ·", lambda: _pruebas_por_suite()["contract"]),

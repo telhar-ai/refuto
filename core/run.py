@@ -17,7 +17,9 @@ reanudar en un sitio distinto del que se dejó, y produce evidencia que dice una
 from __future__ import annotations
 
 import json
+import math
 import subprocess
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -246,17 +248,30 @@ def execute_step(run: Run, step: StepResult, ctxobj: dict, *, dry_run: bool = Tr
         step.reason = ("simulación: no se invocó a ningún agente"
                        if dry_run else "no se proporcionó el texto de la tarea")
     else:
-        out = _invoke(role, step, workspace, budget_usd=budget_usd, prompt_of=prompt_of)
-        step.status = DONE if out["ok"] else FAILED
+        out = _invoke(role, step, workspace, budget_usd=budget_usd, prompt_of=prompt_of,
+                      harness_run_id=run.run_id)
+        step.status = DONE if out["ok"] else (BLOCKED_ if out.get("blocked") else FAILED)
         step.reason = out["detail"]
         step.cost_usd = out.get("cost_usd")
         step.evidence.append({"kind": "command", "command": out["command"],
                               "exit_code": out.get("exit_code"),
                               "excerpt": excerpt(out.get("output", ""), 400)})
-        append_event(workspace, {"kind": "agent/run", "run_id": run.run_id,
-                                 "phase": step.phase, "role": step.role,
-                                 "runtime": step.runtime, "ok": out["ok"],
-                                 "cost_usd": out.get("cost_usd")})
+        if out.get("prompt_reference"):
+            step.evidence.append({"kind": "prompt", **out["prompt_reference"]})
+        try:
+            for observation in out.get("observations", []):
+                append_event(workspace, {"kind": "runtime/report", "run_id": run.run_id,
+                                         "phase": step.phase, "role": step.role,
+                                         "runtime": step.runtime, **observation})
+            append_event(workspace, {"kind": "agent/run", "run_id": run.run_id,
+                                     "phase": step.phase, "role": step.role,
+                                     "runtime": step.runtime, "ok": out["ok"],
+                                     "cost_usd": out.get("cost_usd"),
+                                     "completion_scope": "runtime_exit_only", "acceptance": None,
+                                     "stream_coverage": out.get("stream_coverage")})
+        except (OSError, ValueError) as exc:
+            step.status = BLOCKED_
+            step.reason = f"execution evidence unavailable; effects IN_DOUBT: {exc}"
 
     # 2 · Puertas del rol. Corren aunque la ejecución haya fallado: qué rompió es información.
     if step.gates:
@@ -293,7 +308,8 @@ def execute_step(run: Run, step: StepResult, ctxobj: dict, *, dry_run: bool = Tr
     return step
 
 
-def _invoke(role, step: StepResult, workspace: Path, *, budget_usd: float, prompt_of) -> dict:
+def _invoke(role, step: StepResult, workspace: Path, *, budget_usd: float | None, prompt_of,
+            harness_run_id: str | None = None) -> dict:
     """Llama al runtime elegido con el privilegio mínimo del rol."""
     import os
     from adapters.registry import ADAPTERS
@@ -302,41 +318,118 @@ def _invoke(role, step: StepResult, workspace: Path, *, budget_usd: float, promp
     if spec is None:
         return {"ok": False, "detail": f"no hay adapter para «{step.runtime}»", "command": ""}
 
-    prompt = prompt_of(role, workspace)
-    tmp = workspace / ".harness" / "state" / f"prompt-{step.role}.md"
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    tmp.write_text(prompt, encoding="utf-8", newline="\n")
-
-    argv = spec.run_argv(prompt_file=tmp, allow_tools=_tools_for(spec, role),
-                         effort="medium", headless=True, budget_usd=budget_usd)
+    if budget_usd is not None:
+        try:
+            valid_budget = (not isinstance(budget_usd, bool) and isinstance(budget_usd, (int, float))
+                            and math.isfinite(budget_usd) and budget_usd > 0)
+        except OverflowError:
+            valid_budget = False
+        if not valid_budget:
+            return {"ok": False, "blocked": True, "detail": "invalid execution budget", "command": ""}
+        if ("budget_usd" not in spec.native_extensions or
+                spec.declared.get("budget_usd", {}).get("supported") is False):
+            return {"ok": False, "blocked": True,
+                    "detail": f"{step.runtime} cannot enforce the requested native USD budget",
+                    "command": ""}
+    # This suffix identifies a capture file, never a logical invocation or retry.
+    tmp = workspace / ".harness" / "state" / f"prompt-{uuid.uuid4().hex}.md"
+    try:
+        argv = spec.run_argv(prompt_file=tmp, allow_tools=_tools_for(spec, role),
+                             effort="medium", headless=True, budget_usd=budget_usd)
+    except ValueError as exc:
+        return {"ok": False, "blocked": True,
+                "detail": f"adapter cannot satisfy the requested execution contract: {exc}", "command": ""}
+    except TypeError as exc:
+        return {"ok": False, "detail": f"adapter execution contract rejected: {exc}", "command": ""}
     if not argv:
         return {"ok": False, "detail": f"el adapter de «{step.runtime}» no sabe ejecutar",
                 "command": ""}
-    argv = argv + [prompt]
+    prompt = prompt_of(role, workspace)
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as capture:
+        capture.write(prompt)
+    prompt_reference = {"source": tmp.relative_to(workspace).as_posix(),
+                        "sha256": sha256_text(prompt)}
+
+    argv = argv + ([] if spec.prompt_from_stdin else ["--", prompt])
     env = dict(os.environ)
+    # The parent agent's role/session is not the child operation's identity.
+    env["HARNESS_ROLE"] = role.id
+    if harness_run_id:
+        env["HARNESS_RUN_ID"] = harness_run_id
+    else:
+        env.pop("HARNESS_RUN_ID", None)
     env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
     env.setdefault("KIRO_TELEMETRY_OPT_OUT", "1")
     try:
-        p = subprocess.run(argv, cwd=str(workspace), env=env, capture_output=True, **TEXT_IO,
+        p = subprocess.run(argv, cwd=str(workspace), env=env, capture_output=True,
+                           input=prompt if spec.prompt_from_stdin else None, **TEXT_IO,
                            timeout=900, **spawn_kwargs())
     except (OSError, subprocess.SubprocessError) as exc:
         return {"ok": False, "detail": f"no se pudo ejecutar: {exc}",
-                "command": " ".join(argv[:6])}
+                "command": " ".join(argv[:6]), "prompt_reference": prompt_reference}
 
     cost = None
+    observations = []
+    records = invalid = unmapped = mapping_errors = 0
     ok = p.returncode == 0
     detail = f"salida {p.returncode}"
-    for line in (p.stdout or "").splitlines():
+    for index, line in enumerate((p.stdout or "").splitlines(), 1):
+        if not line.strip():
+            continue
+        records += 1
         try:
             ev = json.loads(line)
         except json.JSONDecodeError:
+            invalid += 1
             continue
+        if not isinstance(ev, dict):
+            invalid += 1
+            continue
+        try:
+            mapped = spec.normalize_events(ev)
+            if not isinstance(mapped, list) or not all(isinstance(x, dict) for x in mapped):
+                raise ValueError("adapter returned an invalid event sequence")
+        except (TypeError, ValueError, AttributeError):
+            mapping_errors += 1
+            mapped = []
+        unmapped += not mapped
+        for event in mapped:
+            def identifier(value):
+                return value if isinstance(value, str) and 0 < len(value) <= 512 else None
+            observations.append({"reported_kind": identifier(event.get("kind")),
+                                 "source_family": identifier(event.get("family")),
+                                 "source_line": index, "source_block": event.get("source_block"),
+                                 "source_digest": sha256_text(line), "source_preserved": False,
+                                 "session_id": identifier(event.get("session_id")),
+                                 "tool_call_id": identifier(event.get("tool_call_id")),
+                                 "tool": identifier(event.get("tool_name"))})
         if ev.get("type") == "result":
-            cost = ev.get("total_cost_usd")
+            value = ev.get("total_cost_usd")
+            try:
+                cost = (float(value) if isinstance(value, (int, float)) and
+                        not isinstance(value, bool) and value >= 0 and math.isfinite(value) else None)
+            except OverflowError:
+                cost = None
             ok = ok and not ev.get("is_error")
             detail = f"{ev.get('subtype', '')} · {ev.get('num_turns')} turnos"
-    return {"ok": ok, "detail": detail, "cost_usd": cost, "exit_code": p.returncode,
-            "command": " ".join(argv[:8]), "output": (p.stdout or "") + (p.stderr or "")}
+    if mapping_errors:
+        ok = False
+        detail += f"; {mapping_errors} normalization errors; effects unverified"
+    return {"ok": ok, "blocked": bool(mapping_errors), "detail": detail,
+            "cost_usd": cost, "exit_code": p.returncode,
+            "prompt_reference": prompt_reference,
+            "command": " ".join(argv[:8]), "output": (p.stdout or "") + (p.stderr or ""),
+            "observations": observations,
+            "stream_coverage": {"status": "NOT_APPLICABLE" if not records else
+                                          "FAIL" if mapping_errors else
+                                          "INCONCLUSIVE" if invalid or unmapped else "PASS",
+                                "scope": "declared_metadata_projection",
+                                "records": records, "invalid_records": invalid,
+                                "unmapped_records": unmapped, "mapping_errors": mapping_errors,
+                                "observations": len(observations),
+                                "projection": "metadata_only", "preserves_original": False}}
 
 
 def _tools_for(spec, role) -> list:

@@ -130,14 +130,15 @@ class TestCoherenciaDelResultado(unittest.TestCase):
         self.assertEqual(1, len(problemas))
         self.assertIn("no se encontró", problemas[0])
 
-    def test_el_denominador_es_el_que_se_mide_contra_el_arbol(self):
-        """Si se comparara el numerador, declarar un fallo volvería a ser imposible."""
+    def test_el_censo_actual_no_reescribe_la_corrida_historica(self):
+        """Ni numerador ni denominador históricos describen un árbol posterior."""
         nombres = [c[0] for c in CM.COMPROBACIONES]
         self.assertIn("total de la suite", nombres)
         patron = [c[1] for c in CM.COMPROBACIONES if c[0] == "total de la suite"][0]
         import re
-        m = re.search(patron, _fila(1371, 1373, 2))
-        self.assertEqual("1373", m.group(1), "el control volvió a capturar el numerador")
+        texto = _fila(1371, 1373, 2) + "\nunit 634 · contract 79 · selftest 97 · adversarial 692 = **1502**"
+        m = re.search(patron, texto)
+        self.assertEqual("1502", m.group(1), "el censo se confundió con la corrida histórica")
 
 
 class TestSobreElREADMEDeVerdad(unittest.TestCase):

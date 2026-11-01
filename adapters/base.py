@@ -47,6 +47,8 @@ class AgentSpec:
     #: Capacidades que el adapter afirma sin poder sondearlas. Cada una lleva su nivel de
     #: evidencia, y `doctor` las distingue de las que sí se comprobaron.
     declared: dict = field(default_factory=dict)
+    #: Verified native support for prompt data on stdin, separate from CLI options.
+    prompt_from_stdin: bool = False
 
     # ── handshake ────────────────────────────────────────────────────────────────────
     def native_handshake(self, path: str, workspace: Path | None) -> dict:
@@ -94,10 +96,16 @@ class AgentSpec:
     def normalize_event(self, raw: dict) -> dict | None:
         """Traduce un evento del flujo nativo al evento canónico de refuto.
 
-        Devuelve `None` para eventos que no interesan. El esquema canónico está en
-        `schemas/event.schema.json`.
+        Devuelve `None` para eventos que no interesan. Esta interfaz singular no
+        acredita normalización sin pérdida de bloques ni un esquema canónico
+        universal publicado; véanse ADR-0009 y ADR-0022.
         """
         return None
+
+    def normalize_events(self, raw: dict) -> list[dict]:
+        """Plural API; single-event adapters remain compatible."""
+        event = self.normalize_event(raw)
+        return [event] if event is not None else []
 
     # ── auxiliares ───────────────────────────────────────────────────────────────────
     def fallback_version(self, path: str) -> str:

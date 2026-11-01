@@ -73,6 +73,9 @@ jobs:
         # confiar: un `import` de tercero se cuela en cualquier revisión distraída.
         run: python3 scripts/check_stdlib_only.py
 
+      - name: Revisión forense sobre datos sintéticos
+        run: python3 scripts/review_product.py --selftest
+
       - name: Compilación de todo el árbol
         run: python3 -m compileall -q core adapters gates tests refuto.py
 

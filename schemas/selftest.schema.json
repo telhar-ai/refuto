@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "refuto.selftest/v1",
+  "title": "Disjoint selftest case outcomes, fixture incidents and boundary provenance",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "suites",
+    "started_at",
+    "finished_at",
+    "duration_seconds",
+    "discovered",
+    "started",
+    "not_started",
+    "cases",
+    "fixture_incidents",
+    "reconciled",
+    "source_before",
+    "source_after",
+    "source_changed",
+    "environment"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "refuto.selftest/v1"
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "NOT_APPLICABLE"
+      ]
+    },
+    "suites": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "discovered": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "started": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "not_started": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cases": {
+      "type": "object",
+      "required": [
+        "PASS",
+        "FAIL",
+        "ERROR",
+        "XPASS",
+        "XFAIL",
+        "SKIP",
+        "UNKNOWN"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "PASS": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "FAIL": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ERROR": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "XPASS": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "XFAIL": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SKIP": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "UNKNOWN": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "fixture_incidents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "reconciled": {
+      "type": "boolean"
+    },
+    "source_before": {
+      "type": "object",
+      "required": [
+        "revision",
+        "source_digest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "source_after": {
+      "type": "object",
+      "required": [
+        "revision",
+        "source_digest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "source_changed": {
+      "type": "boolean"
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "python",
+        "os",
+        "architecture"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "python": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        },
+        "architecture": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
