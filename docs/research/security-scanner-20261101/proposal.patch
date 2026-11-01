@@ -1,0 +1,174 @@
+--- a/core/digest.py
++++ b/core/digest.py
+@@ -98,7 +98,15 @@
+ 
+ #: Prueba: la cadena TIENE forma de credencial. Un falso positivo aquí es casi imposible.
+ CIERTAS = frozenset({"AWS_AKID", "GH_TOKEN", "GL_TOKEN", "SK_TOKEN", "SLACK", "JWT",
+-                     "PRIVKEY", "BEARER"})
++                     "PRIVKEY"})
++
++# Bearer syntax does not prove an issued credential. Keep redact() broad.
++# Complete isolated variable references are distinct from ambiguous expressions.
++# Across physical lines, unresolved context remains subject to blocking review.
++_BEARER_VALUE = re.compile(r"(?i)\bauthorization\s*:\s*bearer\b(?:\s+(?P<v>[\s\S]*))?")
++_BEARER_REFERENCE = re.compile(
++    r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})"
++    r"[\"']?[,;]?[ \t]*")
+ 
+ #: Indicio: un nombre sospechoso recibe un valor. El valor se captura aparte para poder mirarlo.
+ _ASIGNADO = re.compile(
+@@ -167,6 +175,10 @@
+     pruebas = [label for label, pat in _PATTERNS
+                if label in CIERTAS and pat.search(text)]
+     indicios: list[str] = []
++    for bearer in _BEARER_VALUE.finditer(text):
++        if not _BEARER_REFERENCE.fullmatch(bearer.group("v") or ""):
++            indicios.append("bearer con valor literal o contexto no resuelto")
++            break
+     for m in _ASIGNADO.finditer(text):
+         reference = _es_referencia(m.group("v"))
+         tail = text[m.end():].strip()
+--- a/gates/g_security.py
++++ b/gates/g_security.py
+@@ -47,7 +47,9 @@
+     inejecutables: list = []
+ 
+     # 1 · Secretos. Siempre corre: no depende de nada instalado.
+-    scanned, ilegibles, hits = _scan_secrets(ctx.workspace)
++    coverage_notes: list[str] = []
++    scanned, ilegibles, hits = _scan_secrets(ctx.workspace, diagnostics=coverage_notes)
++    observations.extend(coverage_notes)
+     for rel, line_no, labels in hits:
+         if labels == ["REVIEW_REQUIRED"]:
+             blocked = True
+@@ -174,43 +176,105 @@
+                   scope=scope, measure=measure, observations=observations, evidence=evidence)
+ 
+ 
+-def _scan_secrets(root: Path) -> tuple[int, int, list]:
+-    """`(recorridos, ilegibles, hallazgos)`.
+-
+-    `ilegibles` se contaba como cero: el `except OSError: continue` descartaba el archivo y
+-    no dejaba rastro, así que un archivo que no se pudo leer era indistinguible de uno
+-    limpio. Ahora se cuenta, y `Scope.unknown` impide aprobar con él dentro.
+-    """
++def _scan_secrets(root: Path, diagnostics: list[str] | None = None) -> tuple[int, int, list]:
++    """Bounded source scan; skipped/invalid input is unknown, never clean."""
+     import os
+-    scanned, ilegibles, hits = 0, 0, []
+-    for dirpath, dirnames, filenames in os.walk(root):
+-        dirnames[:] = [d for d in dirnames if d not in SKIP]
++    import re
++    import stat
++    scanned, unreadable, hits = 0, 0, []
++    notes = diagnostics if diagnostics is not None else []
++
++    def unknown(path, reason, errno=None):
++        nonlocal unreadable
++        unreadable += 1
++        notes.append(f"{os.path.relpath(path, root)}: cobertura desconocida ({reason}; errno={errno})")
++
++    def walk_error(error):
++        unknown(error.filename or root, type(error).__name__, error.errno)
++
++    for dirpath, dirnames, filenames in os.walk(root, onerror=walk_error):
++        remaining = []
++        for name in dirnames:
++            if name in SKIP:
++                continue
++            p = Path(dirpath) / name
++            if p.is_symlink():
++                unknown(p, "SYMLINK_DIRECTORY_NOT_TRAVERSED")
++            else:
++                remaining.append(name)
++        dirnames[:] = remaining
+         for name in filenames:
+             p = Path(dirpath) / name
+             if p.suffix.lower() in BINARY_EXT:
+                 continue
+             try:
+-                if p.stat().st_size > MAX_BYTES:
+-                    ilegibles += 1  # Coverage unknown: skipped does not mean clean.
++                info = p.lstat()
++                if not stat.S_ISREG(info.st_mode):
++                    unknown(p, "NON_REGULAR_FILE_OR_SYMLINK")
+                     continue
+-                text = p.read_text(encoding="utf-8")
+-            except (OSError, UnicodeError):
+-                ilegibles += 1
++                if info.st_size > MAX_BYTES:
++                    unknown(p, "FILE_TOO_LARGE")
++                    continue
++                # Cap the read too: size can change after lstat(). Do not open
++                # symlinks or special entries that can block on unbounded input.
++                if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
++                    unknown(p, "REQUIRED_OPEN_FLAGS_UNAVAILABLE")
++                    continue
++                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
++                with os.fdopen(os.open(p, flags), "rb") as stream:
++                    opened = os.fstat(stream.fileno())
++                    if not stat.S_ISREG(opened.st_mode):
++                        unknown(p, "NON_REGULAR_OPEN_DESCRIPTOR")
++                        continue
++                    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
++                    identity = lambda value: tuple(getattr(value, field) for field in fields)
++                    if identity(opened) != identity(info):
++                        unknown(p, "ENTRY_CHANGED_BEFORE_READ")
++                        continue
++                    raw = stream.read(MAX_BYTES + 1)
++                    if identity(os.fstat(stream.fileno())) != identity(opened):
++                        unknown(p, "ENTRY_CHANGED_DURING_READ")
++                        continue
++                if len(raw) > MAX_BYTES:
++                    unknown(p, "FILE_GREW_BEYOND_LIMIT")
++                    continue
++                text = raw.decode("utf-8")
++            except (OSError, UnicodeError) as error:
++                unknown(p, type(error).__name__, getattr(error, "errno", None))
+                 continue
+             scanned += 1
+-            for n, line in enumerate(text.splitlines(), 1):
++            for line_no, line in enumerate(text.splitlines(), 1):
+                 labels, indications = classify(line)
+-                if labels:
+-                    hits.append((str(p.relative_to(root)), n, labels))
+-                elif indications:
+-                    hits.append((str(p.relative_to(root)), n, ["REVIEW_REQUIRED"]))
+-            # A private-key pattern spans lines. Preserve its source line, not its value.
++                if labels or indications:
++                    hits.append((str(p.relative_to(root)), line_no, labels or ["REVIEW_REQUIRED"]))
++            # Whole-text review prevents a physical line ending from hiding an
++            # unresolved Bearer continuation. No language/parser equivalence claimed.
++            _, whole_indications = classify(text)
++            if any(label.startswith("bearer ") for label in whole_indications):
++                header = re.search(r"(?i)\bauthorization\s*:\s*bearer\b", text)
++                hits.append((str(p.relative_to(root)), text.count("\n", 0, header.start()) + 1, ["REVIEW_REQUIRED"]))
+             key_pattern = next(pattern for label, pattern in _PATTERNS if label == "PRIVKEY")
+             for match in key_pattern.finditer(text):
+-                if "\n" not in match.group():
+-                    continue
+-                hits.append((str(p.relative_to(root)), text.count("\n", 0, match.start()) + 1, ["PRIVKEY"]))
+-    return scanned, ilegibles, hits
++                if "\n" in match.group():
++                    hits.append((str(p.relative_to(root)), text.count("\n", 0, match.start()) + 1, ["PRIVKEY"]))
++            key_boundaries = re.finditer(r"-----((?:BEGIN|END)) ([A-Z ]*PRIVATE KEY)-----", text)
++            open_keys = []
++            for boundary in key_boundaries:
++                direction, key_type = boundary.groups()
++                boundary_line = text.count("\n", 0, boundary.start()) + 1
++                if direction == "BEGIN":
++                    if open_keys:
++                        unknown(p, f"NESTED_PRIVATE_KEY:line={boundary_line}")
++                    open_keys.append((key_type, boundary_line))
++                elif not open_keys:
++                    unknown(p, f"ORPHAN_PRIVATE_KEY_END:line={boundary_line}")
++                else:
++                    opening_type, opening_line = open_keys.pop()
++                    if opening_type != key_type:
++                        unknown(p, f"MISMATCHED_PRIVATE_KEY:line={opening_line}")
++            for _, opening_line in open_keys:
++                unknown(p, f"UNTERMINATED_PRIVATE_KEY:line={opening_line}")
++    return scanned, unreadable, hits
+ 
+ 
+ def _run_json(argv: list, timeout: int = 300, kind: str | None = None) -> dict:
