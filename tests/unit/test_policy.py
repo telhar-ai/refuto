@@ -119,8 +119,18 @@ class TestProteccionDeRutas(unittest.TestCase):
         self.allow("a/b/repo-nieto/.harness/memory/nota.md")
 
     def test_bloquea_travesia_de_directorios(self):
-        self.deny("../../../etc/passwd", rule="fuera-del-espacio")
-        self.deny("/etc/hosts", rule="fuera-del-espacio")
+        """Las reglas cambiaron el 2026-10-31 y se nombran las nuevas, sin relajar nada.
+
+        `/etc/**` entró en `external_never` —lo que no se escribe fuera del espacio aunque
+        una concesión lo cubra— y se consulta ANTES que la travesía genérica. El veredicto
+        es el mismo; lo que cambia es qué lo explica, y explicarlo con la regla específica
+        es mejor: sigue denegando aunque alguien abra `external_write_allow`.
+        """
+        self.deny("../../../etc/passwd", rule="/etc/**")
+        self.deny("/etc/hosts", rule="/etc/**")
+        # Una ruta fuera del espacio que NO es del sistema sigue cayendo por travesía:
+        # sin esto, la prueba ya no cubriría el motivo genérico que antes afirmaba.
+        self.deny("../../fuera-cualquiera.txt", rule="fuera-del-espacio")
 
     def test_normaliza_antes_de_comparar(self):
         """`a/../b` tiene que compararse como `b`. Sin normalizar, el patrón se sortea."""

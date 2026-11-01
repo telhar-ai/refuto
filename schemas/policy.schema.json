@@ -57,6 +57,13 @@
       },
       "description": "Lo único escribible fuera del espacio. Vacío significa: nada. REDUCE por herencia, por el mismo motivo que `writable_paths`."
     },
+    "external_never": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Lo que NO se escribe fuera del espacio aunque `external_write_allow` lo cubra: credenciales, el gobierno de otro espacio y el fichero donde cada runtime guarda a quién obedece. ACUMULA por herencia. Existe porque fuera del espacio no hay ruta relativa y `protected_paths` —que compara contra el árbol— no llega a evaluarse: medido el 2026-10-31, con `external_write_allow: [\"/**\"]` salían `allow` 9 de 9 objetivos, entre ellos `~/.ssh/id_rsa` y `~/.codex/config.toml`. Se consulta ANTES que `external_write_allow`; evaluado después nunca podría ganarle. Se nombra con brocha fina a propósito (`**/.claude/settings.json`, no `**/.claude/**`): cerrar de más aquí le quita al agente la memoria que `external_write_allow` vino a darle."
+    },
     "secret_read_deny": {
       "type": "array",
       "items": {

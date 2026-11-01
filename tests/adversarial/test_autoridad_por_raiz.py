@@ -239,11 +239,19 @@ class TestH_RutaAbsoluta(unittest.TestCase):
                 str(ws.root / "ai/praxis/packages/backend/src/kernel/mk/policies/x.rs")).outcome)
 
     def test_absoluta_fuera_del_espacio(self):
+        """El veredicto es el de siempre; la REGLA cambió el 2026-10-31 y la prueba lo dice.
+
+        Hasta entonces `/etc/hosts` se denegaba por `fuera-del-espacio`, el motivo genérico.
+        Desde que existe `external_never` lo deniega antes `/etc/**`, que es más específico
+        y además sigue aplicando si alguien abre la travesía. Se afirma `DENY` y que la
+        regla NO es vacía —una denegación sin motivo no se puede auditar—, no cuál de las
+        dos la explica: fijar eso ataba la prueba al orden de evaluación, no al invariante.
+        """
         with Workspace("aut-h3") as ws:
             pol = _montar(ws)
             d = decide_write(pol, ws.root, "/etc/hosts")
             self.assertEqual(DENY, d.outcome)
-            self.assertEqual("fuera-del-espacio", d.rule)
+            self.assertTrue(d.rule, "denegada sin regla que lo explique")
 
 
 class TestI_FronteraDeEspacioAnidado(unittest.TestCase):
