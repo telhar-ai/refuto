@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+from core.proc import TEXT_IO
+
 
 ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / ".githooks/pre-push"
@@ -14,7 +16,7 @@ class TestPrePushGitContext(unittest.TestCase):
     def prepare(self, directory, exit_code=0):
         root = Path(directory)
         local_names = subprocess.check_output(
-            ["git", "rev-parse", "--local-env-vars"], text=True).splitlines()
+            ["git", "rev-parse", "--local-env-vars"], **TEXT_IO).splitlines()
         env = {k: v for k, v in os.environ.items() if k not in local_names}
         env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
                    GIT_TERMINAL_PROMPT="0")
@@ -23,7 +25,7 @@ class TestPrePushGitContext(unittest.TestCase):
             return subprocess.run(["git", "-c", "user.name=Fixture", "-c",
                 "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", *args],
                 cwd=cwd, env=dict(env, **(extra or {})), check=check,
-                capture_output=True, text=True, timeout=20)
+                capture_output=True, timeout=20, **TEXT_IO)
 
         repo, worktree, remote = root / "repo", root / "worktree", root / "remote.git"
         marker = root / "preflight-ran"
