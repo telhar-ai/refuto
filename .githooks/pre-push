@@ -66,7 +66,14 @@ if [ "${HARNESS_SIN_PREFLIGHT:-0}" = "1" ]; then
 fi
 
 printf '\n  preflight antes de empujar (omítalo con HARNESS_SIN_PREFLIGHT=1)\n' >&2
-if ! python3 "$RAIZ/scripts/preflight.py" >&2; then
+if ! (
+    # El hook hereda GIT_DIR absoluto en un worktree. Las fixtures de la suite
+    # deben operar sobre SUS repositorios, no sobre el que se está publicando.
+    for refuto_git_context_name in $(git rev-parse --local-env-vars); do
+        unset "$refuto_git_context_name"
+    done
+    python3 "$RAIZ/scripts/preflight.py"
+) >&2; then
     cat >&2 <<'EOF'
 
   ✗ el preflight no está verde: el empujón se para aquí

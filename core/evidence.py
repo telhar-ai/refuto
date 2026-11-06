@@ -92,6 +92,17 @@ def ledger_path(workspace: Path) -> Path:
     return workspace / ".harness" / "evidence" / LEDGER
 
 
+def _lineas_jsonl(path: Path) -> list[str]:
+    """Separar registros por LF; los separadores Unicode son datos JSON.
+
+    ``str.splitlines`` también corta U+0085, U+2028 y U+2029 dentro de cadenas
+    válidas. No se normalizan CR: CRLF es whitespace JSON válido, pero un CR
+    aislado no debe convertir dos objetos en registros separados.
+    """
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        return fh.read().split("\n")
+
+
 #: Semilla de la cadena de huellas. Un diario vacío tiene una cabeza definida, así que
 #: «no hay eventos» y «me borraron los eventos» dejan de ser el mismo estado.
 GENESIS = hashlib.sha256(b"harness.ledger/v1").hexdigest()
@@ -402,7 +413,7 @@ def verificar_cadena(workspace: Path, esperado: str = "", *,
     previo, n, legado = GENESIS, 0, 0
     vistas: set = set()
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _lineas_jsonl(path)
     except UnicodeDecodeError as exc:
         return {"ok": False, "estado": ROTA, "eventos": 0, "legado": 0, "rota_en": -1,
                 "motivo": f"el diario no es UTF-8 legible: {exc}", "cabeza": GENESIS,
@@ -496,7 +507,7 @@ def read_events(workspace: Path, kinds: list | None = None) -> list:
     if not path.is_file():
         return []
     out = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in _lineas_jsonl(path):
         if not line.strip():
             continue
         try:

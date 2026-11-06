@@ -14,10 +14,48 @@ try:
 except ImportError:
     resource = None
 
-from core.evidence import append_event, ledger_path, verificar_cadena, INTEGRA, ROTA
+from core.evidence import append_event, ledger_path, read_events, verificar_cadena, INTEGRA, ROTA
 
 
 class TestIncompleteEvidence(unittest.TestCase):
+    def test_unicode_line_separators_are_payload_not_record_boundaries(self):
+        for separator in ("\u0085", "\u2028", "\u2029", "\u2028\u2029\u0085"):
+            with self.subTest(separator=repr(separator)), tempfile.TemporaryDirectory() as tmp:
+                ws = Path(tmp)
+                payload = "before" + separator + "after"
+                append_event(ws, {"kind": "fixture/unicode", "payload": payload})
+                append_event(ws, {"kind": "fixture/next"})
+                before = ledger_path(ws).read_bytes()
+                self.assertIn(separator.encode("utf-8"), before)
+                result = verificar_cadena(ws)
+                self.assertEqual(INTEGRA, result["estado"])
+                self.assertEqual(2, result["eventos"])
+                events = read_events(ws)
+                self.assertEqual(2, len(events))
+                self.assertEqual(payload, events[0]["payload"])
+                self.assertEqual(before, ledger_path(ws).read_bytes())
+
+    def test_unicode_payload_tampering_still_breaks_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            append_event(ws, {"kind": "fixture/unicode", "payload": "a\u2028b"})
+            path = ledger_path(ws)
+            path.write_bytes(path.read_bytes().replace(b"a\xe2\x80\xa8b", b"a\xe2\x80\xa9b"))
+            self.assertEqual(ROTA, verificar_cadena(ws)["estado"])
+
+    def test_crlf_records_preserve_chain_but_bare_cr_does_not_split_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            append_event(ws, {"kind": "fixture/first"})
+            append_event(ws, {"kind": "fixture/second"})
+            path = ledger_path(ws)
+            original = path.read_bytes()
+            path.write_bytes(original.replace(b"\n", b"\r\n"))
+            self.assertEqual(INTEGRA, verificar_cadena(ws)["estado"])
+            self.assertEqual(2, len(read_events(ws)))
+            path.write_bytes(original.replace(b"\n", b"\r"))
+            self.assertEqual(ROTA, verificar_cadena(ws)["estado"])
+
     def test_append_refuses_bad_tail_and_preserves_every_byte(self):
         for suffix in (b'x\n', b'[]\n', b'null\n', b'{"h":"partial"}\n', b'{"kind":"\xff"}\n'):
             with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as tmp:
